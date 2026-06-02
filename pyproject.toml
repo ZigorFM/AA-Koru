@@ -13,10 +13,10 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/TU_USUARIO/rekstats"
+Repository = "https://github.com/ZigorFM/AA-rekstats"
 
-[tool.setuptools.packages.find]
-include = ["rekstats*"]
+[tool.setuptools]
+packages = ["rekstats"]
 
 [tool.setuptools.package-data]
 rekstats = [

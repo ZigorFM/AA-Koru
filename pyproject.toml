@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rekstats"
+version = "0.1.0"
+description = "Rekium Corp Statistics App for Alliance Auth"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "allianceauth>=5.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/TU_USUARIO/rekstats"
+
+[tool.setuptools.packages.find]
+include = ["rekstats*"]
+
+[tool.setuptools.package-data]
+rekstats = [
+    "templates/**/*",
+    "static/**/*",
+]

@@ -1,0 +1,2 @@
+recursive-include rekstats/templates *
+recursive-include rekstats/static *

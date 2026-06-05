@@ -194,24 +194,14 @@ def _build_top_mineros(corp_ids, inicio, fin):
         JOIN authentication_characterownership co      ON co.character_id = ec.id
         JOIN authentication_userprofile        up      ON up.user_id      = co.user_id
         JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
-        JOIN alumni_charactercorporationhistory h
-            ON h.character_id = up.main_character_id
-            AND h.corporation_id IN ({placeholders})
-            AND h.start_date < %s
-        LEFT JOIN alumni_charactercorporationhistory next_h
-            ON next_h.character_id = h.character_id
-            AND next_h.record_id = (
-                SELECT MIN(record_id) FROM alumni_charactercorporationhistory
-                WHERE character_id = h.character_id AND record_id > h.record_id
-            )
         JOIN eve_sde_itemtype it ON it.id = ml.type_name_id
         LEFT JOIN eveuniverse_evemarketprice emp ON emp.eve_type_id = ml.type_name_id
         WHERE ml.date >= %s AND ml.date < %s
-          AND (next_h.start_date IS NULL OR next_h.start_date >= %s)
+          AND ec.corporation_id IN ({placeholders})
         GROUP BY main_ec.id, main_ec.character_name, main_ec.character_id
         ORDER BY total_isk DESC LIMIT 10
     """
-    return sql, corp_ids + [fin, inicio, fin, inicio]
+    return sql, [inicio, fin] + corp_ids
 
 
 def _build_top_bounties(corp_ids, inicio, fin):
@@ -225,24 +215,14 @@ def _build_top_bounties(corp_ids, inicio, fin):
         JOIN authentication_characterownership co      ON co.character_id = ec.id
         JOIN authentication_userprofile        up      ON up.user_id      = co.user_id
         JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
-        JOIN alumni_charactercorporationhistory h
-            ON h.character_id = up.main_character_id
-            AND h.corporation_id IN ({placeholders})
-            AND h.start_date < %s
-        LEFT JOIN alumni_charactercorporationhistory next_h
-            ON next_h.character_id = h.character_id
-            AND next_h.record_id = (
-                SELECT MIN(record_id) FROM alumni_charactercorporationhistory
-                WHERE character_id = h.character_id AND record_id > h.record_id
-            )
         WHERE wj.ref_type IN ('bounty_prizes', 'ess_escrow_transfer')
           AND wj.amount > 0
           AND wj.date >= %s AND wj.date < %s
-          AND (next_h.start_date IS NULL OR next_h.start_date >= %s)
+          AND ec.corporation_id IN ({placeholders})
         GROUP BY main_ec.id, main_ec.character_name, main_ec.character_id
         ORDER BY total_isk DESC LIMIT 10
     """
-    return sql, corp_ids + [fin, inicio, fin, inicio]
+    return sql, [inicio, fin] + corp_ids
 
 
 def _build_ore_breakdown_corp(corp_ids, inicio, fin):
@@ -258,24 +238,14 @@ def _build_ore_breakdown_corp(corp_ids, inicio, fin):
         JOIN authentication_characterownership co      ON co.character_id = ec.id
         JOIN authentication_userprofile        up      ON up.user_id      = co.user_id
         JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
-        JOIN alumni_charactercorporationhistory h
-            ON h.character_id = up.main_character_id
-            AND h.corporation_id IN ({placeholders})
-            AND h.start_date < %s
-        LEFT JOIN alumni_charactercorporationhistory next_h
-            ON next_h.character_id = h.character_id
-            AND next_h.record_id = (
-                SELECT MIN(record_id) FROM alumni_charactercorporationhistory
-                WHERE character_id = h.character_id AND record_id > h.record_id
-            )
         JOIN eve_sde_itemtype it ON it.id = ml.type_name_id
         LEFT JOIN eveuniverse_evemarketprice emp ON emp.eve_type_id = ml.type_name_id
         WHERE ml.date >= %s AND ml.date < %s
-          AND (next_h.start_date IS NULL OR next_h.start_date >= %s)
+          AND ec.corporation_id IN ({placeholders})
         GROUP BY it.id, it.name, it.volume
         ORDER BY m3_total DESC
     """
-    return sql, corp_ids + [fin, inicio, fin, inicio]
+    return sql, [inicio, fin] + corp_ids
 
 
 SQL_MINING_PERSONAL = """
@@ -429,10 +399,8 @@ def dashboard(request):
         logger.error("koru_stats tendencias_mineria: %s", e)
 
     try:
-        placeholders = ",".join(["%s"] * len(corp_ids))
-        sql_bou = SQL_TENDENCIAS_BOUNTIES.format(placeholders=placeholders)
         with connection.cursor() as cursor:
-            cursor.execute(sql_bou, corp_ids)
+            cursor.execute(SQL_TENDENCIAS_BOUNTIES)
             tendencias_bounties = _fetchall(cursor)
     except Exception as e:
         logger.error("koru_stats tendencias_bounties: %s", e)
@@ -1622,24 +1590,11 @@ SQL_TENDENCIAS_MINERIA = """
         SUM(ml.quantity) AS unidades,
         ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_mineria
     FROM corptools_characterminingledger ml
-    JOIN corptools_characteraudit          cau     ON cau.id          = ml.character_id
-    JOIN eveonline_evecharacter            ec      ON ec.id           = cau.character_id
-    JOIN authentication_characterownership co      ON co.character_id = ec.id
-    JOIN authentication_userprofile        up      ON up.user_id      = co.user_id
-    JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
-    JOIN alumni_charactercorporationhistory h
-        ON h.character_id = up.main_character_id
-        AND h.corporation_id IN ({placeholders})
-        AND h.start_date < DATE_ADD(DATE_FORMAT(ml.date, '%%Y-%%m-01'), INTERVAL 1 MONTH)
-    LEFT JOIN alumni_charactercorporationhistory next_h
-        ON next_h.character_id = h.character_id
-        AND next_h.record_id = (
-            SELECT MIN(record_id) FROM alumni_charactercorporationhistory
-            WHERE character_id = h.character_id AND record_id > h.record_id
-        )
-    LEFT JOIN eveuniverse_evemarketprice emp ON emp.eve_type_id = ml.type_name_id
+    JOIN corptools_characteraudit          cau ON cau.id          = ml.character_id
+    JOIN eveonline_evecharacter            ec  ON ec.id           = cau.character_id
+    LEFT JOIN eveuniverse_evemarketprice   emp ON emp.eve_type_id = ml.type_name_id
     WHERE ml.date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-      AND (next_h.start_date IS NULL OR next_h.start_date >= DATE_FORMAT(ml.date, '%%Y-%%m-01'))
+      AND ec.corporation_id IN ({placeholders})
     GROUP BY DATE_FORMAT(ml.date, '%%Y-%%m')
     ORDER BY periodo ASC
 """
@@ -1649,24 +1604,9 @@ SQL_TENDENCIAS_BOUNTIES = """
         DATE_FORMAT(wj.date, '%%Y-%%m') AS periodo,
         ROUND(SUM(wj.amount), 2) AS isk_bounties
     FROM corptools_corporationwalletjournalentry wj
-    JOIN eveonline_evecharacter            ec      ON ec.character_id  = wj.second_party_id
-    JOIN authentication_characterownership co      ON co.character_id  = ec.id
-    JOIN authentication_userprofile        up      ON up.user_id       = co.user_id
-    JOIN eveonline_evecharacter            main_ec ON main_ec.id       = up.main_character_id
-    JOIN alumni_charactercorporationhistory h
-        ON h.character_id = up.main_character_id
-        AND h.corporation_id IN ({placeholders})
-        AND h.start_date < DATE_ADD(DATE_FORMAT(wj.date, '%%Y-%%m-01'), INTERVAL 1 MONTH)
-    LEFT JOIN alumni_charactercorporationhistory next_h
-        ON next_h.character_id = h.character_id
-        AND next_h.record_id = (
-            SELECT MIN(record_id) FROM alumni_charactercorporationhistory
-            WHERE character_id = h.character_id AND record_id > h.record_id
-        )
     WHERE wj.ref_type IN ('bounty_prizes', 'ess_escrow_transfer')
       AND wj.amount > 0
       AND wj.date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-      AND (next_h.start_date IS NULL OR next_h.start_date >= DATE_FORMAT(wj.date, '%%Y-%%m-01'))
     GROUP BY DATE_FORMAT(wj.date, '%%Y-%%m')
     ORDER BY periodo ASC
 """

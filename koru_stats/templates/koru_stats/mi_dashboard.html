@@ -86,11 +86,13 @@
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabIngresos" type="button">
                         <i class="fas fa-arrow-up me-1 text-success"></i>Ingresos
+                        {% if total_ingresos_p %}<span class="badge bg-success ms-1">{{ total_ingresos_p|rkisk }}</span>{% endif %}
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabGastos" type="button">
                         <i class="fas fa-arrow-down me-1 text-danger"></i>Gastos
+                        {% if total_gastos_p %}<span class="badge bg-danger ms-1">{{ total_gastos_p|rkisk }}</span>{% endif %}
                     </button>
                 </li>
                 <li class="ms-auto d-flex align-items-center px-3">

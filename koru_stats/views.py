@@ -522,6 +522,7 @@ def mi_dashboard(request):
     # ── Wallet personal por categorías ─────────────────────────────────────
     ingresos_personal, gastos_personal = [], []
     balance_personal = 0
+    total_ing_p = total_gas_p = 0
     ingresos_donut, gastos_donut = [], []
     error_wallet_personal = False
     try:
@@ -606,6 +607,8 @@ def mi_dashboard(request):
         "bounties_desglose":     bounties_desglose,
         "ingresos_personal":     ingresos_personal,
         "gastos_personal":       gastos_personal,
+        "total_ingresos_p":      total_ing_p,
+        "total_gastos_p":        total_gas_p,
         "balance_personal":      balance_personal,
         "balance_personal_json": json.dumps(float(balance_personal)),
         "error_wallet_personal": error_wallet_personal,

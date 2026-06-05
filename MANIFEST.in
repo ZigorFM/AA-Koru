@@ -1,2 +1,2 @@
-recursive-include rekstats/templates *
-recursive-include rekstats/static *
+recursive-include koru_stats/templates *
+recursive-include koru_stats/static *

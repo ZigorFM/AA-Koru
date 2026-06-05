@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rekstats"
-version = "0.1.0"
+name = "koru-stats"
+version = "0.2.0"
 description = "Rekium Corp Statistics App for Alliance Auth"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,13 +13,13 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/ZigorFM/AA-rekstats"
+Repository = "https://github.com/ZigorFM/AA-Koru"
 
 [tool.setuptools]
-packages = ["rekstats"]
+packages = ["koru_stats"]
 
 [tool.setuptools.package-data]
-rekstats = [
+koru_stats = [
     "templates/**/*",
     "static/**/*",
 ]

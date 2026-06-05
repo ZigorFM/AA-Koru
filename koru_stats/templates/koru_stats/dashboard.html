@@ -1,0 +1,404 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Rekium Stats{% endblock %}
+
+{% block page_title %}
+    {% translate "Estadísticas Corp" as page_header %}
+    {% translate "Datos del período seleccionado" as optional_subtitle %}
+    {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:mi_dashboard" as url_personal %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_personal title="Mi Dashboard" fa_icon="fa-solid fa-user-astronaut" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.chart-container { position: relative; height: 280px; }
+.pilot-portrait { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.medal-1 { color: #ffc107; }
+.medal-2 { color: #adb5bd; }
+.medal-3 { color: #cd7f32; }
+.ore-bar { height: 6px; border-radius: 3px; background: #3b82f6; transition: width 0.4s ease; }
+.delta-up   { color: #10b981; font-size: 0.7rem; font-weight: 600; }
+.delta-down { color: #ef4444; font-size: 0.7rem; font-weight: 600; }
+.delta-new  { color: #f59e0b; font-size: 0.7rem; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+    {# Barra de filtros #}
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body py-2 d-flex align-items-center gap-3 flex-wrap">
+                    <i class="fas fa-calendar-alt text-info"></i>
+                    <strong>Período:</strong>
+                    {% include "koru_stats/includes/periodo_selector.html" %}
+                    <span class="text-muted small">Mostrando <strong>{{ mes }}</strong></span>
+                    {% if corp_names %}
+                    <span class="ms-auto text-muted small">
+                        <i class="fas fa-building me-1"></i>
+                        {% for name in corp_names %}{{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                    </span>
+                    {% else %}
+                    <span class="ms-auto">
+                        <a href="/admin/koru_stats/trackedcorporation/add/" class="btn btn-sm btn-warning">
+                            <i class="fas fa-exclamation-triangle me-1"></i>Sin corps configuradas
+                        </a>
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Top Mineros + Top Bounties #}
+    <div class="row g-4 mb-4">
+        <div class="col-12 col-xl-6">
+            <div class="card h-100">
+                <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fas fa-gem text-info"></i><strong>Top Mineros</strong>
+                    </div>
+                    <div class="btn-group btn-group-sm" role="group" id="toggleMineros">
+                        <button type="button" class="btn btn-outline-info" data-mode="unidades">Unidades</button>
+                        <button type="button" class="btn btn-outline-info" data-mode="m3">Volumen m³</button>
+                        <button type="button" class="btn btn-info active" data-mode="isk">ISK est.</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    {% if error_mineros %}
+                        <div class="aa-callout aa-callout-warning"><p class="mb-0"><i class="fas fa-exclamation-triangle me-1"></i>No se pudieron cargar los datos de minería.</p></div>
+                    {% else %}
+                        <div class="chart-container mb-3"><canvas id="chartMineros"></canvas></div>
+                        <table class="table table-sm table-hover align-middle">
+                            <thead class="table-dark"><tr><th style="width:40px">#</th><th>Piloto</th><th class="text-end" id="headerMineros">ISK est.</th><th class="text-end" style="width:60px">vs ant.</th></tr></thead>
+                            <tbody>
+                                {% for r in top_mineros %}
+                                <tr>
+                                    <td>{% if forloop.counter == 1 %}<i class="fas fa-medal medal-1"></i>{% elif forloop.counter == 2 %}<i class="fas fa-medal medal-2"></i>{% elif forloop.counter == 3 %}<i class="fas fa-medal medal-3"></i>{% else %}<span class="text-muted">{{ forloop.counter }}</span>{% endif %}</td>
+                                    <td><img src="https://images.evetech.net/characters/{{ r.char_id }}/portrait?size=32" class="pilot-portrait me-2" onerror="this.style.display='none'">{{ r.nombre }}</td>
+                                    <td class="text-end font-monospace">
+                                        <span class="val-unidades">{{ r.total_unidades|rknum }}</span>
+                                        <span class="val-m3" style="display:none">{{ r.total_m3|rknum }}</span>
+                                        <span class="val-isk" style="display:none">{{ r.total_isk|rkisk }}</span>
+                                    </td>
+                                    <td class="text-end">
+                                        {% if r.delta_dir == "up" %}
+                                            <span class="delta-up">▲ {{ r.delta_pct }}%</span>
+                                        {% elif r.delta_dir == "down" %}
+                                            <span class="delta-down">▼ {{ r.delta_pct|cut:"-" }}%</span>
+                                        {% else %}
+                                            <span class="delta-new">NEW</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}<tr><td colspan="3" class="text-center text-muted py-3"><i class="fas fa-inbox me-1"></i>Sin datos este período</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-xl-6">
+            <div class="card h-100">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fas fa-crosshairs text-danger"></i><strong>Top Bounties</strong>
+                </div>
+                <div class="card-body">
+                    {% if error_bounties %}
+                        <div class="aa-callout aa-callout-warning"><p class="mb-0"><i class="fas fa-exclamation-triangle me-1"></i>No se pudieron cargar los datos de bounties.</p></div>
+                    {% else %}
+                        <div class="chart-container mb-3"><canvas id="chartBounties"></canvas></div>
+                        <table class="table table-sm table-hover align-middle">
+                            <thead class="table-dark"><tr><th style="width:40px">#</th><th>Piloto</th><th class="text-end">ISK</th><th class="text-end" style="width:60px">vs ant.</th></tr></thead>
+                            <tbody>
+                                {% for r in top_bounties %}
+                                <tr>
+                                    <td>{% if forloop.counter == 1 %}<i class="fas fa-medal medal-1"></i>{% elif forloop.counter == 2 %}<i class="fas fa-medal medal-2"></i>{% elif forloop.counter == 3 %}<i class="fas fa-medal medal-3"></i>{% else %}<span class="text-muted">{{ forloop.counter }}</span>{% endif %}</td>
+                                    <td><img src="https://images.evetech.net/characters/{{ r.char_id }}/portrait?size=32" class="pilot-portrait me-2" onerror="this.style.display='none'">{{ r.nombre }}</td>
+                                    <td class="text-end font-monospace">{{ r.total_isk|rkisk }} ISK</td>
+                                    <td class="text-end">
+                                        {% if r.delta_dir == "up" %}
+                                            <span class="delta-up">▲ {{ r.delta_pct }}%</span>
+                                        {% elif r.delta_dir == "down" %}
+                                            <span class="delta-down">▼ {{ r.delta_pct|cut:"-" }}%</span>
+                                        {% else %}
+                                            <span class="delta-new">NEW</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}<tr><td colspan="3" class="text-center text-muted py-3"><i class="fas fa-inbox me-1"></i>Sin datos este período</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Breakdown por ore #}
+    <div class="row g-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fas fa-layer-group text-warning"></i>
+                        <strong>Desglose por Tipo de Ore</strong>
+                    </div>
+                    {% if ore_breakdown %}
+                    <div class="d-flex gap-3 text-muted small">
+                        <span><i class="fas fa-cube me-1"></i>Total m³: <strong class="text-info" id="totalM3">—</strong></span>
+                        <span><i class="fas fa-coins me-1"></i>ISK estimado: <strong class="text-warning" id="totalIskOre">—</strong></span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% if error_ore %}
+                        <div class="aa-callout aa-callout-warning"><p class="mb-0"><i class="fas fa-exclamation-triangle me-1"></i>No se pudieron cargar los datos de ore.</p></div>
+                    {% elif ore_breakdown %}
+                    <div class="row g-4">
+                        <div class="col-12 col-md-5">
+                            <div class="chart-container">
+                                <canvas id="chartOre"></canvas>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-7">
+                            <table class="table table-sm table-hover align-middle">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Ore</th>
+                                        <th class="text-end">Unidades</th>
+                                        <th class="text-end">m³</th>
+                                        <th class="text-end">ISK est.</th>
+                                        <th style="width:80px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for r in ore_breakdown %}
+                                    <tr>
+                                        <td class="small">{{ r.ore }}</td>
+                                        <td class="text-end font-monospace small">{{ r.unidades|rknum }}</td>
+                                        <td class="text-end font-monospace small">{{ r.m3_total|rknum }}</td>
+                                        <td class="text-end font-monospace small text-warning">{{ r.isk_estimado|rkisk }}</td>
+                                        <td><div class="ore-bar" style="width:0%" data-m3="{{ r.m3_total }}"></div></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% else %}
+                        <div class="text-center text-muted py-4"><i class="fas fa-inbox fa-2x mb-2 d-block"></i>Sin datos de minería este período</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+    {# Tendencias históricas #}
+    <div class="row g-4 mt-2">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fas fa-chart-line text-success"></i>
+                        <strong>Tendencias — Últimos 6 meses</strong>
+                    </div>
+                    <div class="btn-group btn-group-sm" id="toggleTendencias">
+                        <button class="btn btn-success active" data-mode="isk">ISK</button>
+                        <button class="btn btn-outline-success" data-mode="unidades">Unidades</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container" style="height:300px">
+                        <canvas id="chartTendencias"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_javascript %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    const PALETTE = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#f97316','#84cc16','#ec4899','#6366f1'];
+    const fmtISK = v => v >= 1e9 ? (v/1e9).toFixed(2)+' B' : v >= 1e6 ? (v/1e6).toFixed(2)+' M' : v >= 1e3 ? (v/1e3).toFixed(1)+' K' : v.toFixed(0);
+    const fmtNum = v => new Intl.NumberFormat('es-ES').format(Math.round(v));
+    const baseOpts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } };
+
+    const totalM3    = parseFloat("{{ total_m3|floatformat:2 }}".replace(",","."));
+    const totalIskOre = parseFloat("{{ total_isk_ore|floatformat:2 }}".replace(",","."));
+    const elM3  = document.getElementById('totalM3');
+    const elISK = document.getElementById('totalIskOre');
+    if (elM3)  elM3.textContent  = fmtNum(totalM3) + ' m³';
+    if (elISK) elISK.textContent = fmtISK(totalIskOre) + ' ISK';
+
+    const oreBars = document.querySelectorAll('.ore-bar');
+    if (oreBars.length) {
+        const maxM3 = Math.max(...Array.from(oreBars).map(b => parseFloat(b.dataset.m3) || 0));
+        oreBars.forEach(b => {
+            const pct = maxM3 > 0 ? (parseFloat(b.dataset.m3) / maxM3 * 100).toFixed(1) : 0;
+            b.style.width = pct + '%';
+        });
+    }
+
+    const dataMin = {{ chart_mineros|safe }};
+    const ctxMin = document.getElementById('chartMineros');
+    let chartMineros = null;
+
+    const modeConfig = {
+        unidades: { data: dataMin.unidades, fmt: v => fmtNum(v) + ' u',   label: 'Unidades' },
+        m3:       { data: dataMin.m3,       fmt: v => fmtNum(v) + ' m³',  label: 'Volumen m³' },
+        isk:      { data: dataMin.isk,      fmt: v => fmtISK(v) + ' ISK', label: 'ISK estimado' },
+    };
+
+    function buildChartMineros(mode) {
+        const cfg = modeConfig[mode];
+        if (chartMineros) chartMineros.destroy();
+        chartMineros = new Chart(ctxMin, {
+            type: 'bar',
+            data: {
+                labels: dataMin.labels,
+                datasets: [{ data: cfg.data, backgroundColor: PALETTE.slice(0, cfg.data.length), borderRadius: 5 }]
+            },
+            options: {
+                ...baseOpts,
+                scales: { y: { beginAtZero: true, ticks: { callback: mode === 'isk' ? fmtISK : fmtNum } } },
+                plugins: { ...baseOpts.plugins, tooltip: { callbacks: { label: ctx => ' ' + cfg.fmt(ctx.raw) } } }
+            }
+        });
+    }
+
+    const modeHeaders = { unidades: 'Unidades', m3: 'Volumen m³', isk: 'ISK est.' };
+
+    function updateTable(mode) {
+        document.getElementById('headerMineros').textContent = modeHeaders[mode];
+        document.querySelectorAll('.val-unidades').forEach(el => el.style.display = mode === 'unidades' ? '' : 'none');
+        document.querySelectorAll('.val-m3').forEach(el => el.style.display = mode === 'm3' ? '' : 'none');
+        document.querySelectorAll('.val-isk').forEach(el => el.style.display = mode === 'isk' ? '' : 'none');
+    }
+
+    if (ctxMin && dataMin.labels.length) {
+        buildChartMineros('isk');
+        updateTable('isk');
+        document.getElementById('toggleMineros').addEventListener('click', e => {
+            const btn = e.target.closest('button[data-mode]');
+            if (!btn) return;
+            document.querySelectorAll('#toggleMineros button').forEach(b => {
+                b.className = 'btn btn-outline-info btn-sm';
+            });
+            btn.className = 'btn btn-info btn-sm active';
+            buildChartMineros(btn.dataset.mode);
+            updateTable(btn.dataset.mode);
+        });
+    }
+
+    const dataBou = {{ chart_bounties|safe }};
+    const ctxBou = document.getElementById('chartBounties');
+    if (ctxBou && dataBou.labels.length) {
+        new Chart(ctxBou, { type: 'bar', data: { labels: dataBou.labels, datasets: [{ data: dataBou.data, backgroundColor: PALETTE.map(c => c+'cc'), borderColor: PALETTE, borderWidth: 1, borderRadius: 5 }] }, options: { ...baseOpts, scales: { y: { beginAtZero: true, ticks: { callback: fmtISK } } }, plugins: { ...baseOpts.plugins, tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } } });
+    }
+
+    const dataOre = {{ chart_ore|safe }};
+    const ctxOre = document.getElementById('chartOre');
+    if (ctxOre && dataOre.labels.length) {
+        new Chart(ctxOre, { type: 'doughnut', data: { labels: dataOre.labels, datasets: [{ data: dataOre.data, backgroundColor: PALETTE.slice(0, dataOre.data.length), hoverOffset: 8 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '55%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } } });
+    }
+})();
+
+// ── Tendencias históricas ───────────────────────────────────────
+const dataTend = {{ chart_tendencias|safe }};
+const ctxTend  = document.getElementById('chartTendencias');
+let chartTend  = null;
+
+const fmtISK2 = v => {
+    v = parseFloat(v) || 0;
+    if (v >= 1e12) return (v/1e12).toFixed(2)+' T';
+    if (v >= 1e9)  return (v/1e9).toFixed(2)+' B';
+    if (v >= 1e6)  return (v/1e6).toFixed(2)+' M';
+    if (v >= 1e3)  return (v/1e3).toFixed(1)+' K';
+    return v.toFixed(0);
+};
+const fmtNum2 = v => { v = parseFloat(v)||0; if(v>=1e9) return (v/1e9).toFixed(1)+"B"; if(v>=1e6) return (v/1e6).toFixed(1)+"M"; if(v>=1e3) return (v/1e3).toFixed(0)+"K"; return v.toFixed(0); };
+
+function buildTendencias(mode) {
+    if (chartTend) chartTend.destroy();
+    const isISK = mode === 'isk';
+    const datasets = isISK ? [
+        {
+            label: 'Minería ISK',
+            data: dataTend.mineria,
+            borderColor: '#06b6d4',
+            backgroundColor: 'rgba(6,182,212,0.15)',
+            borderWidth: 2, fill: true, tension: 0.35,
+            pointBackgroundColor: '#06b6d4', pointRadius: 4,
+        },
+        {
+            label: 'Bounties ISK',
+            data: dataTend.bounties,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239,68,68,0.15)',
+            borderWidth: 2, fill: true, tension: 0.35,
+            pointBackgroundColor: '#ef4444', pointRadius: 4,
+        }
+    ] : [
+        {
+            label: 'Unidades minadas',
+            data: dataTend.unidades,
+            borderColor: '#06b6d4',
+            backgroundColor: 'rgba(6,182,212,0.2)',
+            borderWidth: 2, fill: true, tension: 0.35,
+            pointBackgroundColor: '#06b6d4', pointRadius: 4,
+        }
+    ];
+
+    chartTend = new Chart(ctxTend, {
+        type: 'line',
+        data: { labels: dataTend.labels, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12 } },
+                tooltip: { callbacks: {
+                    label: ctx => ' ' + ctx.dataset.label + ': ' +
+                        (isISK ? fmtISK2(ctx.raw) + ' ISK' : fmtNum2(ctx.raw) + ' u')
+                }}
+            },
+            scales: {
+                x: { grid: { color: 'rgba(255,255,255,0.05)' } },
+                y: { beginAtZero: true, ticks: { callback: isISK ? fmtISK2 : fmtNum2 },
+                     grid: { color: 'rgba(255,255,255,0.05)' } }
+            }
+        }
+    });
+}
+
+if (ctxTend && dataTend.labels.length) {
+    buildTendencias('isk');
+    document.getElementById('toggleTendencias').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-mode]');
+        if (!btn) return;
+        document.querySelectorAll('#toggleTendencias button').forEach(b => {
+            b.className = 'btn btn-outline-success btn-sm';
+        });
+        btn.className = 'btn btn-success btn-sm active';
+        buildTendencias(btn.dataset.mode);
+    });
+}
+</script>
+{% endblock %}

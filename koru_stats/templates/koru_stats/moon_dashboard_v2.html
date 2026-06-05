@@ -1,0 +1,593 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Lunas — Rekium Stats{% endblock %}
+
+{% block page_title %}
+    {% translate "Mining de Lunas" as page_header %}
+    {% translate "Lunas de Rekium — datos reales de estructura" as optional_subtitle %}
+    {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:dashboard" as url_ranking %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_ranking title="Ranking" fa_icon="fa-solid fa-chart-bar" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.chart-container { position: relative; height: 260px; min-height: 260px; }
+.pilot-portrait  { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.tier-badge { font-size: 0.7rem; font-weight: 600; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+.tier-1884 { background: rgba(16,185,129,.2);  color: #10b981; }
+.tier-1920 { background: rgba(59,130,246,.2);  color: #3b82f6; }
+.tier-1921 { background: rgba(139,92,246,.2);  color: #8b5cf6; }
+.tier-1922 { background: rgba(245,158,11,.2);  color: #f59e0b; }
+.tier-1923 { background: rgba(239,68,68,.2);   color: #ef4444; }
+.paid-row   { opacity: .65; }
+.stat-big   { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.stat-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; }
+.kpi-card   { border-left: 4px solid var(--bs-primary); }
+.kpi-card.green  { border-left-color: #10b981; }
+.kpi-card.red    { border-left-color: #ef4444; }
+.kpi-card.yellow { border-left-color: #f59e0b; }
+.kpi-card.blue   { border-left-color: #3b82f6; }
+.kpi-card.orange { border-left-color: #f97316; }
+details > summary { cursor: pointer; user-select: none; }
+.contrato-box {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 10px 12px; font-family: monospace; font-size: 0.78rem;
+    white-space: pre-line; color: #c9d1d9; margin-top: 8px;
+}
+.comp-badge {
+    display: inline-block; background: rgba(255,255,255,.08);
+    border-radius: 4px; padding: 1px 6px; font-size: 0.72rem;
+    font-family: monospace; margin: 1px;
+}
+.externo-row { border-left: 3px solid #f97316; }
+.rekium-row  { border-left: 3px solid #10b981; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+    {# Selector período #}
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body py-2 d-flex align-items-center gap-3 flex-wrap">
+                    <i class="fas fa-calendar-alt text-info"></i>
+                    <strong>Período:</strong>
+                    {% include "koru_stats/includes/periodo_selector.html" %}
+                    <span class="text-muted small">Mostrando <strong>{{ mes }}</strong></span>
+                    {% if tax_config %}
+                    <span class="ms-auto text-muted small">
+                        <i class="fas fa-cog me-1"></i>
+                        U:{{ tax_config.ubiquitous_rate }}%
+                        C:{{ tax_config.common_rate }}%
+                        UC:{{ tax_config.uncommon_rate }}%
+                        R:{{ tax_config.rare_rate }}%
+                        E:{{ tax_config.exceptional_rate }}%
+                    </span>
+                    {% else %}
+                    <a href="/admin/koru_stats/moontaxconfig/add/" class="ms-auto btn btn-sm btn-warning">
+                        <i class="fas fa-exclamation-triangle me-1"></i>Sin config de tax
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# KPIs #}
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-2">
+            <div class="card kpi-card blue h-100">
+                <div class="card-body">
+                    <div class="stat-label mb-1">ISK minado total</div>
+                    <div class="stat-big text-info" id="kpiIskMoon">—</div>
+                    <small class="text-muted">valor mercado</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card kpi-card yellow h-100">
+                <div class="card-body">
+                    <div class="stat-label mb-1">Tax total</div>
+                    <div class="stat-big text-warning" id="kpiTaxTotal">—</div>
+                    <small class="text-muted">adeudado</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card kpi-card green h-100">
+                <div class="card-body">
+                    <div class="stat-label mb-1">Tax cobrado</div>
+                    <div class="stat-big text-success" id="kpiPagado">—</div>
+                    <small class="text-muted">ISK</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card kpi-card red h-100">
+                <div class="card-body">
+                    <div class="stat-label mb-1">Tax pendiente</div>
+                    <div class="stat-big text-danger" id="kpiPendiente">—</div>
+                    <small class="text-muted">ISK</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card kpi-card h-100">
+                <div class="card-body">
+                    <div class="stat-label mb-1">Mineros Rekium</div>
+                    <div class="stat-big text-primary">{{ rekium_list|length }}</div>
+                    <small class="text-muted">este período</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card kpi-card orange h-100">
+                <div class="card-body">
+                    <div class="stat-label mb-1">Externos</div>
+                    <div class="stat-big text-warning">{{ externos_list|length }}</div>
+                    <small class="text-muted" id="kpiIskExt">— ISK</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Gráficas #}
+    <div class="row g-4 mb-4">
+        <div class="col-12 col-md-4">
+            <div class="card h-100">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fas fa-moon text-warning"></i><strong>ISK por tier</strong>
+                </div>
+                <div class="card-body">
+                    {% if resumen_tier %}
+                    <div class="chart-container"><canvas id="chartTier"></canvas></div>
+                    <table class="table table-sm mt-3 mb-0">
+                        <thead class="table-dark">
+                            <tr><th>Tier</th><th class="text-end">Unidades</th><th class="text-end">ISK est.</th><th class="text-end">Tasa</th><th class="text-end">Tax</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for r in resumen_tier %}
+                            <tr>
+                                <td><span class="tier-badge tier-{{ r.group_id }}">{{ r.tier }}</span></td>
+                                <td class="text-end font-monospace small">{{ r.unidades|rknum }}</td>
+                                <td class="text-end font-monospace small text-warning">{{ r.isk_estimado|rkisk }}</td>
+                                <td class="text-end small">
+                                    {% if tax_config %}
+                                        {% if r.group_id == 1884 %}{{ tax_config.ubiquitous_rate }}%
+                                        {% elif r.group_id == 1920 %}{{ tax_config.common_rate }}%
+                                        {% elif r.group_id == 1921 %}{{ tax_config.uncommon_rate }}%
+                                        {% elif r.group_id == 1922 %}{{ tax_config.rare_rate }}%
+                                        {% elif r.group_id == 1923 %}{{ tax_config.exceptional_rate }}%
+                                        {% endif %}
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td class="text-end font-monospace small text-danger" id="taxTier{{ r.group_id }}">—</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center text-muted py-4"><i class="fas fa-inbox fa-2x mb-2 d-block"></i>Sin datos este período</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-8">
+            <div class="card h-100">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fas fa-trophy text-warning"></i><strong>Top tax Rekium</strong>
+                </div>
+                <div class="card-body">
+                    {% if rekium_list %}
+                    <div class="chart-container"><canvas id="chartRekium"></canvas></div>
+                    {% else %}
+                    <div class="text-center text-muted py-4"><i class="fas fa-inbox fa-2x mb-2 d-block"></i>Sin datos</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Resumen por luna #}
+    {% if por_luna %}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fas fa-satellite text-info"></i>
+                    <strong>Actividad por luna</strong>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Luna</th>
+                                <th class="text-center">Mineros</th>
+                                <th class="text-end">Unidades</th>
+                                <th class="text-end">m³</th>
+                                <th class="text-end">ISK est.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in por_luna %}
+                            <tr>
+                                <td class="font-monospace small">
+                                    <i class="fas fa-moon text-warning me-2"></i>{{ r.luna }}
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge bg-secondary">{{ r.mineros }}</span>
+                                </td>
+                                <td class="text-end font-monospace small">{{ r.unidades|rknum }}</td>
+                                <td class="text-end font-monospace small">{{ r.m3_total|rknum }}</td>
+                                <td class="text-end font-monospace small text-warning">{{ r.isk_estimado|rkisk }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Tabla Miembros Rekium #}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fas fa-users text-success"></i>
+                    <strong>Miembros Rekium — {{ mes }}</strong>
+                    {% if can_manage_tax %}
+                    <span class="ms-auto badge bg-danger">Modo director activo</span>
+                    {% endif %}
+                </div>
+                <div class="card-body p-0">
+                    {% if rekium_list %}
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th style="width:40px"></th>
+                                <th>Piloto</th>
+                                <th class="text-end">ISK minado</th>
+                                <th class="text-end">Tax adeudado</th>
+                                <th class="text-center">Tiers</th>
+                                <th class="text-center">Estado</th>
+                                {% if can_manage_tax %}<th class="text-center">Acción</th>{% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in rekium_list %}
+                            <tr class="rekium-row {% if p.is_paid %}paid-row{% endif %}">
+                                <td>
+                                    <img src="https://images.evetech.net/characters/{{ p.char_id }}/portrait?size=32"
+                                         class="pilot-portrait" onerror="this.style.display='none'">
+                                </td>
+                                <td>
+                                    <details>
+                                        <summary class="fw-semibold">{{ p.nombre }}</summary>
+                                        <div class="mt-2 ms-2">
+
+                                            {# Desglose por tier del main #}
+                                            <div class="mb-2">
+                                                {% for gid, tier in p.tiers.items %}
+                                                <div class="d-flex gap-3 small text-muted mb-1 flex-wrap">
+                                                    <span class="tier-badge tier-{{ gid }}">{{ tier.tier }}</span>
+                                                    <span>{{ tier.unidades|rknum }} u</span>
+                                                    <span class="text-warning">{{ tier.isk|floatformat:0 }} ISK</span>
+                                                    <span class="text-danger">Tax: {{ tier.tax|floatformat:0 }} ISK ({{ tier.tasa }}%)</span>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+
+                                            {# Alts #}
+                                            {% if p.alts %}
+                                            <div class="mt-2 mb-2">
+                                                <small class="text-muted"><i class="fas fa-users me-1"></i>Personajes:</small>
+                                                <table class="table table-sm table-dark mt-1 mb-0" style="font-size:0.75rem">
+                                                    <thead><tr><th>Personaje</th><th>Tier</th><th class="text-end">Unidades</th><th class="text-end">ISK est.</th></tr></thead>
+                                                    <tbody>
+                                                        {% for alt_id, alt in p.alts.items %}
+                                                        {% for gid, atier in alt.tiers.items %}
+                                                        <tr>
+                                                            <td>
+                                                                <img src="https://images.evetech.net/characters/{{ alt.char_id }}/portrait?size=24"
+                                                                     style="width:24px;height:24px;border-radius:50%;margin-right:4px"
+                                                                     onerror="this.style.display='none'">
+                                                                {{ alt.nombre }}
+                                                                {% if alt.es_main %}<span class="badge bg-primary ms-1" style="font-size:0.6rem">main</span>{% endif %}
+                                                            </td>
+                                                            <td><span class="tier-badge tier-{{ gid }}">{{ atier.tier }}</span></td>
+                                                            <td class="text-end font-monospace">{{ atier.unidades|rknum }}</td>
+                                                            <td class="text-end font-monospace text-warning">{{ atier.isk|floatformat:0 }}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            {% endif %}
+
+                                            {# Contrato #}
+                                            {% if p.contrato %}
+                                            <div class="mt-2">
+                                                <div class="d-flex align-items-center gap-2 mb-1">
+                                                    <i class="fas fa-file-contract text-info"></i>
+                                                    <strong class="small">Contrato EVE — Comprimidos:</strong>
+                                                </div>
+                                                <div class="mb-2">
+                                                    {% for ore, cantidad in p.contrato.comprimidos.items %}
+                                                    <span class="comp-badge">{{ ore }}: {{ cantidad }}</span>
+                                                    {% endfor %}
+                                                </div>
+                                                <div class="contrato-box" id="contrato-{{ p.char_id }}">{{ p.contrato.texto }}</div>
+                                                <button class="btn btn-sm btn-outline-secondary mt-1"
+                                                        onclick="copiarContrato('contrato-{{ p.char_id }}', this)">
+                                                    <i class="fas fa-copy me-1"></i>Copiar
+                                                </button>
+                                            </div>
+                                            {% endif %}
+
+                                        </div>
+                                    </details>
+                                </td>
+                                <td class="text-end font-monospace">{{ p.total_isk|floatformat:0|rkisk }}</td>
+                                <td class="text-end font-monospace text-danger fw-bold">{{ p.total_tax|floatformat:0|rkisk }}</td>
+                                <td class="text-center">
+                                    {% for gid in p.tiers.keys %}
+                                    <span class="tier-badge tier-{{ gid }}">{{ moon_ore_groups|dict_key:gid }}</span>
+                                    {% endfor %}
+                                </td>
+                                <td class="text-center">
+                                    {% if p.is_paid %}
+                                        <span class="badge bg-success"><i class="fas fa-check me-1"></i>Pagado</span>
+                                        {% if p.paid_by %}
+                                        <div class="text-muted" style="font-size:0.65rem">
+                                            {{ p.paid_by }} — {{ p.paid_at|date:"d/m/Y H:i" }}
+                                        </div>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-danger"><i class="fas fa-clock me-1"></i>Pendiente</span>
+                                    {% endif %}
+                                </td>
+                                {% if can_manage_tax %}
+                                <td class="text-center">
+                                    {% if not p.is_paid and p.payment_id %}
+                                    <button type="button" class="btn btn-sm btn-success"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#modalPago"
+                                            data-payment-id="{{ p.payment_id }}"
+                                            data-nombre="{{ p.nombre }}"
+                                            data-isk="{{ p.total_tax|floatformat:0 }}"
+                                            data-periodo="{{ periodo_sel }}">
+                                        <i class="fas fa-check me-1"></i>Marcar pagado
+                                    </button>
+                                    {% elif p.is_paid %}
+                                        <span class="text-muted small">✅</span>
+                                    {% endif %}
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center text-muted py-4">
+                        <i class="fas fa-inbox fa-2x mb-2 d-block"></i>Sin datos de miembros este período
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Tabla Externos #}
+    {% if externos_list %}
+    <div class="row g-4">
+        <div class="col-12">
+            <div class="card border-warning">
+                <div class="card-header d-flex align-items-center gap-2 bg-warning bg-opacity-10">
+                    <i class="fas fa-exclamation-triangle text-warning"></i>
+                    <strong class="text-warning">Externos — minaron en lunas de Rekium</strong>
+                    <span class="ms-auto badge bg-warning text-dark">{{ externos_list|length }} pilotos</span>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th style="width:40px"></th>
+                                <th>Piloto</th>
+                                <th>Corporación</th>
+                                <th class="text-end">ISK minado</th>
+                                <th class="text-center">Tiers</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in externos_list %}
+                            <tr class="externo-row">
+                                <td>
+                                    <img src="https://images.evetech.net/characters/{{ p.char_id }}/portrait?size=32"
+                                         class="pilot-portrait" onerror="this.style.display='none'">
+                                </td>
+                                <td>
+                                    <details>
+                                        <summary class="fw-semibold text-warning">{{ p.nombre }}</summary>
+                                        <div class="mt-2 ms-2">
+                                            {% for gid, tier in p.tiers.items %}
+                                            <div class="d-flex gap-3 small text-muted mb-1">
+                                                <span class="tier-badge tier-{{ gid }}">{{ tier.tier }}</span>
+                                                <span>{{ tier.unidades|rknum }} u</span>
+                                                <span class="text-warning">{{ tier.isk|floatformat:0 }} ISK</span>
+                                            </div>
+                                            {% endfor %}
+                                            {# Detalle por ore del externo #}
+                                            {% with ores=detalle_por_piloto|dict_key:p.char_id %}
+                                            {% if ores %}
+                                            <table class="table table-sm table-dark mb-0 mt-2" style="font-size:0.75rem">
+                                                <thead><tr><th>Ore</th><th>Tier</th><th class="text-end">Unidades</th><th class="text-end">ISK est.</th></tr></thead>
+                                                <tbody>
+                                                    {% for d in ores %}
+                                                    <tr>
+                                                        <td>{{ d.ore }}</td>
+                                                        <td><span class="tier-badge tier-{{ d.group_id }}">{{ d.tier }}</span></td>
+                                                        <td class="text-end font-monospace">{{ d.unidades|rknum }}</td>
+                                                        <td class="text-end font-monospace text-warning">{{ d.isk_estimado|rkisk }}</td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                            {% endif %}
+                                            {% endwith %}
+                                        </div>
+                                    </details>
+                                </td>
+                                <td>
+                                    <img src="https://images.evetech.net/corporations/{{ p.corp_id }}/logo?size=32"
+                                         class="pilot-portrait me-2" onerror="this.style.display='none'">
+                                    {{ p.corp_nombre }}
+                                </td>
+                                <td class="text-end font-monospace text-warning">{{ p.total_isk|floatformat:0|rkisk }}</td>
+                                <td class="text-center">
+                                    {% for gid in p.tiers.keys %}
+                                    <span class="tier-badge tier-{{ gid }}">{{ moon_ore_groups|dict_key:gid }}</span>
+                                    {% endfor %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+{# Modal pago #}
+{% if can_manage_tax %}
+<div class="modal fade" id="modalPago" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-check-circle text-success me-2"></i>Confirmar pago</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" id="formPago" action="">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p>¿Confirmar pago de tax lunar de <strong id="modalNombre"></strong>?</p>
+                    <p class="text-warning fw-bold" id="modalISK"></p>
+                    <div class="mb-3">
+                        <label class="form-label small">Notas (opcional)</label>
+                        <textarea name="notes" class="form-control form-control-sm" rows="2"
+                                  placeholder="Ej: contrato #12345 aceptado"></textarea>
+                    </div>
+                    <input type="hidden" name="periodo" id="modalPeriodo" value="">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-check me-1"></i>Confirmar pago
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_javascript %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    const fmtISK = v => {
+        v = parseFloat(v) || 0;
+        if (v >= 1e12) return (v/1e12).toFixed(2)+' T';
+        if (v >= 1e9)  return (v/1e9).toFixed(2)+' B';
+        if (v >= 1e6)  return (v/1e6).toFixed(2)+' M';
+        if (v >= 1e3)  return (v/1e3).toFixed(1)+' K';
+        return v.toFixed(0);
+    };
+    const parseNum = s => parseFloat(String(s).replace(",",".")) || 0;
+    const el = id => document.getElementById(id);
+
+    // KPIs
+    const kpiIskMoon   = parseNum("{{ total_isk_moon|floatformat:2 }}");
+    const kpiTaxTotal  = parseNum("{{ total_tax_mes|floatformat:2 }}");
+    const kpiPagado    = parseNum("{{ total_pagado|floatformat:2 }}");
+    const kpiPendiente = parseNum("{{ total_pendiente|floatformat:2 }}");
+    const kpiIskExt    = parseNum("{{ total_isk_ext|floatformat:2 }}");
+
+    if (el('kpiIskMoon'))   el('kpiIskMoon').textContent   = fmtISK(kpiIskMoon) + ' ISK';
+    if (el('kpiTaxTotal'))  el('kpiTaxTotal').textContent  = fmtISK(kpiTaxTotal) + ' ISK';
+    if (el('kpiPagado'))    el('kpiPagado').textContent    = fmtISK(kpiPagado) + ' ISK';
+    if (el('kpiPendiente')) el('kpiPendiente').textContent = fmtISK(kpiPendiente) + ' ISK';
+    if (el('kpiIskExt'))    el('kpiIskExt').textContent    = fmtISK(kpiIskExt) + ' ISK';
+
+    // Tax por tier
+    {% if tax_config %}{% for r in resumen_tier %}
+    (function() {
+        const isk  = parseNum("{{ r.isk_estimado|floatformat:2 }}");
+        const tasa = parseNum("{% if r.group_id == 1884 %}{{ tax_config.ubiquitous_rate }}{% elif r.group_id == 1920 %}{{ tax_config.common_rate }}{% elif r.group_id == 1921 %}{{ tax_config.uncommon_rate }}{% elif r.group_id == 1922 %}{{ tax_config.rare_rate }}{% elif r.group_id == 1923 %}{{ tax_config.exceptional_rate }}{% else %}0{% endif %}");
+        const t = el('taxTier{{ r.group_id }}');
+        if (t) t.textContent = fmtISK(isk * tasa / 100) + ' ISK';
+    })();
+    {% endfor %}{% endif %}
+
+    // Donut tier
+    const dataTier = {{ chart_tier|safe }};
+    const ctxTier  = el('chartTier');
+    if (ctxTier && dataTier.data && dataTier.data.length) {
+        new Chart(ctxTier, { type: 'doughnut',
+            data: { labels: dataTier.labels, datasets: [{ data: dataTier.data, backgroundColor: dataTier.colors, hoverOffset: 8 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '55%',
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } },
+                    tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } }
+        });
+    }
+
+    // Barras rekium
+    const dataRek = {{ chart_rekium|safe }};
+    const ctxRek  = el('chartRekium');
+    if (ctxRek && dataRek.data && dataRek.data.length) {
+        new Chart(ctxRek, { type: 'bar',
+            data: { labels: dataRek.labels, datasets: [{ data: dataRek.data, backgroundColor: 'rgba(239,68,68,0.8)', borderRadius: 5 }] },
+            options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } },
+                scales: { y: { beginAtZero: true, ticks: { callback: fmtISK } } } }
+        });
+    }
+
+    // Modal pago
+    const modalEl = el('modalPago');
+    if (modalEl) {
+        modalEl.addEventListener('show.bs.modal', e => {
+            const btn = e.relatedTarget;
+            el('modalNombre').textContent = btn.dataset.nombre;
+            el('modalISK').textContent    = fmtISK(parseFloat(btn.dataset.isk)) + ' ISK';
+            el('modalPeriodo').value      = btn.dataset.periodo;
+            el('formPago').action         = `/koru_stats/lunas/pagar/${btn.dataset.paymentId}/`;
+        });
+    }
+})();
+
+function copiarContrato(id, btn) {
+    const e = document.getElementById(id);
+    if (!e) return;
+    navigator.clipboard.writeText(e.textContent.trim()).then(() => {
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check me-1"></i>¡Copiado!';
+        btn.classList.replace('btn-outline-secondary', 'btn-success');
+        setTimeout(() => { btn.innerHTML = orig; btn.classList.replace('btn-success', 'btn-outline-secondary'); }, 2000);
+    });
+}
+</script>
+{% endblock %}

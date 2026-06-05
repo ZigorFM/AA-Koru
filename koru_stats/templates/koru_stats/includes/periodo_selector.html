@@ -1,0 +1,41 @@
+{% load koru_stats_tags %}
+{# Selector de período en dos niveles: año + mes #}
+{# Requiere en contexto: años_disponibles, meses_por_anio, periodos_json, periodo_sel, anio_sel #}
+<form method="get" action="" class="d-flex align-items-center gap-2 mb-0" id="formPeriodo">
+    <select name="_anio" id="selectAnio" class="form-select form-select-sm w-auto">
+        {% for anio in años_disponibles %}
+        <option value="{{ anio }}" {% if anio == anio_sel %}selected{% endif %}>{{ anio }}</option>
+        {% endfor %}
+    </select>
+    <select name="periodo" id="selectMes" class="form-select form-select-sm w-auto">
+        {% for p in meses_por_anio|dict_key:anio_sel %}
+        <option value="{{ p.valor }}" {% if p.valor == periodo_sel %}selected{% endif %}>{{ p.label }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-outline-info">
+        <i class="fas fa-search"></i>
+    </button>
+</form>
+
+<script>
+(function() {
+    const periodos = {{ periodos_json|safe }};
+    const selectAnio = document.getElementById('selectAnio');
+    const selectMes  = document.getElementById('selectMes');
+    const periodoSel = "{{ periodo_sel }}";
+
+    function updateMeses(anio) {
+        const meses = periodos[anio] || [];
+        selectMes.innerHTML = '';
+        meses.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.valor;
+            opt.textContent = p.label;
+            if (p.valor === periodoSel) opt.selected = true;
+            selectMes.appendChild(opt);
+        });
+    }
+
+    selectAnio.addEventListener('change', () => updateMeses(selectAnio.value));
+})();
+</script>

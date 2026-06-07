@@ -209,14 +209,16 @@
                     <div class="btn-group btn-group-sm" id="toggleOre">
                         <button class="btn btn-outline-warning" data-col="unidades">U</button>
                         <button class="btn btn-outline-warning" data-col="m3">m³</button>
-                        <button class="btn btn-warning active" data-col="isk">ISK</button>
+                        <button class="btn btn-outline-warning" data-col="isk">Bruto</button>
+                        <button class="btn btn-outline-warning" data-col="isk_comp">Comp.</button>
+                        <button class="btn btn-warning active" data-col="isk_repr">85%</button>
                     </div>
                 </div>
                 <div class="card-body p-2">
                     {% if ore_breakdown %}
                     <table class="table table-sm table-hover mb-0 align-middle" id="tablaOre">
                         <thead class="table-dark">
-                            <tr><th>Ore</th><th class="text-end" id="hdrOre">ISK 85%<span class="ms-1"><button class="btn btn-outline-warning py-0 px-1 ore-isk-btn" style="font-size:10px" data-isk="isk_estimado">Bruto</button><button class="btn btn-outline-warning py-0 px-1 ore-isk-btn" style="font-size:10px" data-isk="isk_comp">Comp.</button><button class="btn btn-warning py-0 px-1 ore-isk-btn active" style="font-size:10px" data-isk="isk_repr">85%</button></span></th><th style="width:50px"></th></tr>
+                            <tr><th>Ore</th><th class="text-end" id="hdrOre">ISK 85%</th><th style="width:50px"></th></tr>
                         </thead>
                         <tbody>
                             {% for r in ore_breakdown %}
@@ -227,7 +229,7 @@
                                     <span class="ore-m3" style="display:none">{{ r.m3_total|rknum }}</span>
                                     <span class="ore-isk text-warning ore-isk-val" data-isk_estimado="{{ r.isk_estimado }}" data-isk_comp="{{ r.isk_comp }}" data-isk_repr="{{ r.isk_repr }}">{{ r.isk_repr|rkisk }}</span>
                                 </td>
-                                <td><div class="ore-bar" style="width:0%" data-u="{{ r.unidades }}" data-m3="{{ r.m3_total }}" data-isk="{{ r.isk_repr }}"></div></td>
+                                <td><div class="ore-bar" style="width:0%" data-u="{{ r.unidades }}" data-m3="{{ r.m3_total }}" data-isk="{{ r.isk_estimado }}" data-isk_comp="{{ r.isk_comp }}" data-isk_repr="{{ r.isk_repr }}"></div></td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -500,26 +502,45 @@
         new Chart(ctxM, { type: 'doughnut', data: { labels: dataMining.labels, datasets: [{ data: dataMining.data, backgroundColor: PALETTE.slice(0, dataMining.data.length), hoverOffset: 8 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => ' ' + new Intl.NumberFormat('en-US').format(ctx.raw) + ' u' } } } } });
     }
 
-    const hdrOre = { unidades: 'Unidades', m3: 'Volumen m³', isk: 'ISK est.' };
+    const hdrOreLabels = {
+        unidades: 'Unidades', m3: 'Volumen m³',
+        isk: 'ISK Bruto', isk_comp: 'ISK Comprimido', isk_repr: 'ISK 85%'
+    };
     const oreBars = document.querySelectorAll('.ore-bar');
+    const oreIskKey = { isk: 'isk_estimado', isk_comp: 'isk_comp', isk_repr: 'isk_repr' };
+    const fmtV = v => v >= 1e9 ? (v/1e9).toFixed(2)+' B' : v >= 1e6 ? (v/1e6).toFixed(2)+' M' : v >= 1e3 ? (v/1e3).toFixed(1)+' K' : Number(v).toFixed(0);
 
     function setOreMode(mode) {
-        document.getElementById('hdrOre').textContent = hdrOre[mode];
+        const hdrEl = document.getElementById('hdrOre');
+        if (hdrEl) hdrEl.textContent = hdrOreLabels[mode] || mode;
+        const isISK = mode === 'isk' || mode === 'isk_comp' || mode === 'isk_repr';
         document.querySelectorAll('.ore-u').forEach(el => el.style.display  = mode === 'unidades' ? '' : 'none');
         document.querySelectorAll('.ore-m3').forEach(el => el.style.display = mode === 'm3'       ? '' : 'none');
-        document.querySelectorAll('.ore-isk').forEach(el => el.style.display = mode === 'isk'     ? '' : 'none');
-        const vals = Array.from(oreBars).map(b => parseFloat(b.dataset[mode === 'unidades' ? 'u' : mode]) || 0);
+        document.querySelectorAll('.ore-isk').forEach(el => el.style.display = isISK ? '' : 'none');
+        if (isISK) {
+            const dKey = oreIskKey[mode];
+            document.querySelectorAll('.ore-isk-val').forEach(el => {
+                const v = parseFloat(el.dataset[dKey]) || 0;
+                el.textContent = fmtV(v);
+            });
+        }
+        const barKey = mode === 'unidades' ? 'u' : mode === 'm3' ? 'm3' : oreIskKey[mode] || 'isk_repr';
+        const vals = Array.from(oreBars).map(b => parseFloat(b.dataset[barKey]) || 0);
         const maxV = Math.max(...vals);
         oreBars.forEach((b, i) => { b.style.width = maxV > 0 ? (vals[i] / maxV * 100).toFixed(1) + '%' : '0%'; });
     }
 
     if (oreBars.length) {
-        setOreMode('isk');
+        setOreMode('isk_repr');
         document.getElementById('toggleOre').addEventListener('click', e => {
             const btn = e.target.closest('button[data-col]');
             if (!btn) return;
-            document.querySelectorAll('#toggleOre button').forEach(b => b.className = 'btn btn-outline-warning btn-sm');
-            btn.className = 'btn btn-warning btn-sm active';
+            document.querySelectorAll('#toggleOre button').forEach(b => {
+                b.classList.remove('btn-warning', 'active');
+                b.classList.add('btn-outline-warning');
+            });
+            btn.classList.remove('btn-outline-warning');
+            btn.classList.add('btn-warning', 'active');
             setOreMode(btn.dataset.col);
         });
     }
@@ -556,25 +577,6 @@
     }
 })();
 
-    // ── Ore ISK type switcher ─────────────────────────────────────────
-    document.querySelectorAll('.ore-isk-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const isk_key = btn.dataset.isk;
-            document.querySelectorAll('.ore-isk-btn').forEach(b => {
-                b.classList.remove('btn-warning', 'active');
-                b.classList.add('btn-outline-warning');
-            });
-            btn.classList.remove('btn-outline-warning');
-            btn.classList.add('btn-warning', 'active');
-            const labels = { isk_estimado: 'ISK Bruto', isk_comp: 'ISK Comp.', isk_repr: 'ISK 85%' };
-            const hdr = document.getElementById('hdrOre');
-            if (hdr) hdr.childNodes[0].textContent = labels[isk_key];
-            document.querySelectorAll('.ore-isk-val').forEach(el => {
-                const v = parseFloat(el.dataset[isk_key]) || 0;
-                el.textContent = v >= 1e9 ? (v/1e9).toFixed(2)+' B' : v >= 1e6 ? (v/1e6).toFixed(2)+' M' : v >= 1e3 ? (v/1e3).toFixed(1)+' K' : v.toFixed(0);
-            });
-        });
-    });
 </script>
 {% endif %}
 {% endblock %}

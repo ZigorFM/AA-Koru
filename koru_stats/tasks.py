@@ -592,10 +592,10 @@ def aggregate_character_monthly_summary(periods=None, full=False):
 
 
 # ---------------------------------------------------------------------------
-# Tarea 3 — CharacterMonthlyPvp (zKillboard corp-level + ESI por killmail)
+# Tarea 3 — CharacterMonthlyPvp (zKillboard corp-level, paginado sin filtro fecha)
 # ---------------------------------------------------------------------------
 
-ESI_BASE = "https://esi.evetech.net/latest"
+ESI_BASE    = "https://esi.evetech.net/latest"
 ESI_HEADERS = {"User-Agent": "Rekium koru_stats/1.0 contact:sietehierros@gmail.com"}
 
 
@@ -614,15 +614,15 @@ def _esi_killmail(killmail_id, kz_hash):
 @shared_task
 def fetch_pvp_from_zkillboard(periods=None, full=False):
     """
-    Descarga kills/losses de zKillboard a nivel de CORP (pocas llamadas zkill)
-    y usa ESI para identificar el personaje implicado en cada killmail.
+    Descarga kills/losses de zKillboard a nivel de CORP sin filtro de fecha
+    (startTime/endTime eliminado por zkill). Pagina hasta cubrir los periodos
+    objetivo y usa ESI para conocer fecha y personaje de cada killmail.
 
-    Kills:  attacker con final_blow=True que pertenezca a nuestra corp
-    Losses: victim que pertenezca a nuestra corp
-
-    Ventajas vs consulta por personaje:
-    - Solo 2 calls zkill por corp/mes (no 2xN_personajes)
-    - ESI tiene rate-limit mucho más alto que zkill
+    Lógica:
+      - Por cada página de corp kills/losses (200 por página):
+        1. Fetch ESI del killmail → obtiene killmail_time y victim/attackers
+        2. Filtra kills dentro de nuestros periodos objetivo
+        3. Para cuando todos los kills de la página son anteriores al periodo más antiguo
     """
     from collections import defaultdict
 
@@ -640,6 +640,11 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         logger.warning("koru fetch_pvp: sin periodos")
         return 0
 
+    # Calcular rango de fechas a cubrir
+    sorted_periods = sorted(periods)
+    oldest_period  = sorted_periods[0]   # "YYYY-MM"
+    oldest_cutoff  = oldest_period + "-01"   # "YYYY-MM-01"
+
     # Mapa char_id (EVE) → {main_char_id, main_char_name, corporation_id}
     characters = _get_corp_characters(corp_ids)
     if not characters:
@@ -647,10 +652,9 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         return 0
 
     char_map = {c["char_id"]: c for c in characters}
-    logger.info("koru fetch_pvp: %d chars mapeados, %d corps, %d periodos",
-                len(char_map), len(corp_ids), len(periods))
+    logger.info("koru fetch_pvp: %d chars, %d corps, periodos %s→%s",
+                len(char_map), len(corp_ids), oldest_period, sorted_periods[-1])
 
-    # aggregation: {(main_char_id, period) -> dict}
     agg = defaultdict(lambda: {
         "main_char_name": "",
         "corporation_id": 0,
@@ -660,23 +664,25 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         "isk_lost":        0.0,
     })
 
+    total_esi = 0
+
     for corp_id in corp_ids:
-        for period in periods:
-            anio_i, mes_i = int(period.split("-")[0]), int(period.split("-")[1])
-            last_day = calendar.monthrange(anio_i, mes_i)[1]
-            t_start  = f"{anio_i}{mes_i:02d}01000000"
-            t_end    = f"{anio_i}{mes_i:02d}{last_day:02d}235959"
-            time_filter = f"startTime/{t_start}/endTime/{t_end}/"
+        for kind in ("kills", "losses"):
+            logger.info("koru fetch_pvp: corp=%s %s — paginando...", corp_id, kind)
+            page = 1
+            done = False
 
-            for kind in ("kills", "losses"):
-                url = f"{ZKILL_BASE}/{kind}/corporationID/{corp_id}/{time_filter}"
-                killmails = _zkill_get(url, max_pages=20)
-                killmails = [k for k in killmails if isinstance(k, dict)]
+            while not done and page <= 50:   # max 50 páginas = 10 000 killmails
+                url = f"{ZKILL_BASE}/{kind}/corporationID/{corp_id}/page/{page}/"
+                kms = _zkill_get_single_page(url)
 
-                logger.info("koru fetch_pvp: corp=%s period=%s %s → %d killmails",
-                            corp_id, period, kind, len(killmails))
+                if not kms:
+                    break
 
-                for km in killmails:
+                all_too_old = True
+                for km in kms:
+                    if not isinstance(km, dict):
+                        continue
                     km_id   = km.get("killmail_id")
                     zkb     = km.get("zkb", {})
                     km_hash = zkb.get("hash")
@@ -684,38 +690,57 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                     if not km_id or not km_hash:
                         continue
 
-                    # Fetch ESI para saber qué personaje fue
                     esi = _esi_killmail(km_id, km_hash)
+                    total_esi += 1
                     if not esi:
                         continue
-                    time.sleep(0.05)   # ESI rate-limit suave
+                    time.sleep(0.05)
+
+                    km_time = esi.get("killmail_time", "")   # "2026-06-07T11:26:02Z"
+                    period  = km_time[:7]   # "2026-06"
+
+                    if km_time[:10] < oldest_cutoff:
+                        done = True          # este y siguientes son demasiado viejos
+                        break
+
+                    all_too_old = False
+
+                    if period not in periods:
+                        continue            # fuera del rango objetivo pero no demasiado viejo
 
                     if kind == "losses":
-                        victim = esi.get("victim", {})
+                        victim  = esi.get("victim", {})
                         char_id = victim.get("character_id")
                         if char_id and char_id in char_map:
-                            c = char_map[char_id]
+                            c   = char_map[char_id]
                             key = (c["main_char_id"], period)
                             agg[key]["main_char_name"] = c["main_char_name"]
                             agg[key]["corporation_id"] = c["corporation_id"]
                             agg[key]["ships_lost"]  += 1
                             agg[key]["isk_lost"]    += value
 
-                    else:  # kills — buscamos final blow de nuestra corp
+                    else:
                         for att in esi.get("attackers", []):
                             if not att.get("final_blow"):
                                 continue
                             char_id = att.get("character_id")
                             if char_id and char_id in char_map:
-                                c = char_map[char_id]
+                                c   = char_map[char_id]
                                 key = (c["main_char_id"], period)
                                 agg[key]["main_char_name"] = c["main_char_name"]
                                 agg[key]["corporation_id"] = c["corporation_id"]
                                 agg[key]["ships_destroyed"] += 1
                                 agg[key]["isk_destroyed"]   += value
-                            break  # solo un final blow
+                            break
 
-                time.sleep(0.5)   # pausa entre calls zkill
+                if all_too_old:
+                    done = True
+
+                page += 1
+                time.sleep(0.5)   # pausa entre páginas zkill
+
+            logger.info("koru fetch_pvp: corp=%s %s — %d páginas, %d calls ESI",
+                        corp_id, kind, page - 1, total_esi)
 
     # ── Persistir ──
     saved = 0
@@ -736,8 +761,34 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         )
         saved += 1
 
-    logger.info("koru fetch_pvp DONE: %d registros guardados", saved)
+    logger.info("koru fetch_pvp DONE: %d registros guardados, %d calls ESI", saved, total_esi)
     return saved
+
+
+def _zkill_get_single_page(url):
+    """Fetch una sola página de zkillboard. Devuelve lista o []."""
+    try:
+        r = http_requests.get(url, headers=ZKILL_HEADERS, timeout=20)
+        if r.status_code == 429:
+            logger.warning("zkill 429 — esperando 60s")
+            time.sleep(60)
+            r = http_requests.get(url, headers=ZKILL_HEADERS, timeout=20)
+            if r.status_code == 429:
+                logger.warning("zkill 429 persistente — abortando")
+                return []
+        if r.status_code == 404:
+            return []
+        if r.status_code != 200 or not r.text.strip():
+            logger.warning("zkill_get_single_page %s status=%s", url, r.status_code)
+            return []
+        data = r.json()
+        if isinstance(data, dict) and "error" in data:
+            logger.warning("zkill error: %s", data["error"])
+            return []
+        return data if isinstance(data, list) else []
+    except Exception as exc:
+        logger.warning("zkill_get_single_page %s: %s", url, exc)
+        return []
 
 
 # Alias para compatibilidad con run_koru_aggregations

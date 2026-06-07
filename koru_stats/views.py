@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import date, datetime
 
 from django.contrib.auth.decorators import permission_required
+from django.core.cache import cache
 from django.db import connection
 from django.shortcuts import render
 
@@ -57,7 +58,16 @@ def _get_periodos():
 
 
 def _get_periodos_con_datos(tipo="general"):
-    """Devuelve solo los períodos YYYY-MM que tienen datos reales."""
+    """Devuelve solo los períodos YYYY-MM que tienen datos reales.
+
+    Resultado cacheado 10 minutos — los períodos disponibles cambian
+    como mucho una vez al mes (cuando corptools importa datos nuevos).
+    """
+    cache_key = f"koru_periodos_{tipo}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         with connection.cursor() as cursor:
             if tipo == "luna":
@@ -105,6 +115,8 @@ def _get_periodos_con_datos(tipo="general"):
             })
         except (ValueError, IndexError):
             continue
+
+    cache.set(cache_key, periodos, timeout=600)  # 10 minutos
     return periodos
 
 
@@ -145,13 +157,22 @@ def _parse_periodo(request):
 
 
 def _get_corp_ids():
-    """Lee las corp IDs activas configuradas en el admin."""
+    """Lee las corp IDs activas configuradas en el admin.
+
+    Resultado cacheado 5 minutos — cambia solo cuando un admin
+    activa o desactiva una corp en el panel.
+    """
+    cached = cache.get("koru_corp_ids")
+    if cached is not None:
+        return cached
     ids = list(
         TrackedCorporation.objects
         .filter(is_active=True)
         .values_list("corporation_id", flat=True)
     )
-    return ids if ids else [0]  # 0 no dará resultados si no hay corps configuradas
+    result = ids if ids else [0]  # 0 no dará resultados si no hay corps configuradas
+    cache.set("koru_corp_ids", result, timeout=300)  # 5 minutos
+    return result
 
 
 def _corp_filter_sql(inicio, fin):

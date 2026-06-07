@@ -429,15 +429,21 @@ def _build_ore_breakdown_corp(corp_ids, inicio, fin):
 
 SQL_MINING_PERSONAL = """
     SELECT ec.character_name AS nombre, ec.character_id AS char_id,
-           SUM(ml.quantity) AS total_unidades
+           SUM(ml.quantity)                                                    AS total_unidades,
+           ROUND(SUM(ml.quantity * COALESCE(it.volume, 0)), 2)                 AS total_m3,
+           ROUND(SUM(ml.quantity * COALESCE(orp.price_raw, 0)), 2)             AS isk_raw,
+           ROUND(SUM(ml.quantity * COALESCE(orp.price_compressed, 0)), 2)      AS isk_comp,
+           ROUND(SUM(ml.quantity * COALESCE(orp.price_reprocessed, 0)), 2)     AS isk_repr
     FROM corptools_characterminingledger ml
     JOIN corptools_characteraudit          cau ON cau.id          = ml.character_id
     JOIN eveonline_evecharacter            ec  ON ec.id           = cau.character_id
     JOIN authentication_characterownership co  ON co.character_id = ec.id
     JOIN authentication_userprofile        up  ON up.user_id      = co.user_id
+    JOIN eve_sde_itemtype                  it  ON it.id           = ml.type_name_id
+    LEFT JOIN koru_stats_oremarketprice    orp ON orp.type_id     = ml.type_name_id
     WHERE up.main_character_id = %s AND ml.date >= %s AND ml.date < %s
     GROUP BY ec.id, ec.character_name, ec.character_id
-    ORDER BY total_unidades DESC
+    ORDER BY isk_repr DESC
 """
 
 SQL_BOUNTIES_DIARIOS = """
@@ -803,7 +809,14 @@ def mi_dashboard(request):
         "error_mining":       error_mining,
         "error_bounties":    error_bounties,
         "error_ore":         error_ore,
-        "chart_mining_personal": _to_json({"labels": [r["nombre"] for r in mining_personal], "data": [int(r["total_unidades"]) for r in mining_personal]}),
+        "chart_mining_personal": _to_json({
+            "labels":   [r["nombre"]          for r in mining_personal],
+            "unidades": [int(r["total_unidades"] or 0) for r in mining_personal],
+            "m3":       [float(r["total_m3"]    or 0) for r in mining_personal],
+            "isk":      [float(r["isk_raw"]     or 0) for r in mining_personal],
+            "isk_comp": [float(r["isk_comp"]    or 0) for r in mining_personal],
+            "isk_repr": [float(r["isk_repr"]    or 0) for r in mining_personal],
+        }),
         "chart_bounties_dia":    _to_json({"labels": [str(r["dia"]) for r in bounties_diarios], "data": [float(Decimal(str(r["total_isk"]))) for r in bounties_diarios]}),
         "chart_ore":             _to_json({"labels": [r["ore"] for r in top_ore_chart], "data": [float(r["isk_estimado"] or 0) for r in top_ore_chart]}),
         "mining_sistemas":       mining_sistemas,
@@ -843,9 +856,11 @@ def mi_dashboard(request):
 SQL_MINING_POR_SISTEMA = """
     SELECT ms.name AS sistema,
            ms.security_status AS sec,
-           SUM(ml.quantity) AS unidades,
-           ROUND(SUM(ml.quantity * it.volume), 2) AS m3_total,
-           ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_estimado
+           SUM(ml.quantity)                                                    AS unidades,
+           ROUND(SUM(ml.quantity * COALESCE(it.volume, 0)), 2)                 AS m3_total,
+           ROUND(SUM(ml.quantity * COALESCE(orp.price_raw, 0)), 2)             AS isk_estimado,
+           ROUND(SUM(ml.quantity * COALESCE(orp.price_compressed, 0)), 2)      AS isk_comp,
+           ROUND(SUM(ml.quantity * COALESCE(orp.price_reprocessed, 0)), 2)     AS isk_repr
     FROM corptools_characterminingledger ml
     JOIN corptools_characteraudit          cau ON cau.id          = ml.character_id
     JOIN eveonline_evecharacter            ec  ON ec.id           = cau.character_id
@@ -853,11 +868,11 @@ SQL_MINING_POR_SISTEMA = """
     JOIN authentication_userprofile        up  ON up.user_id      = co.user_id
     JOIN corptools_mapsystem               ms  ON ms.system_id    = ml.system_id
     JOIN eve_sde_itemtype                  it  ON it.id           = ml.type_name_id
-    LEFT JOIN eveuniverse_evemarketprice   emp ON emp.eve_type_id = ml.type_name_id
+    LEFT JOIN koru_stats_oremarketprice    orp ON orp.type_id     = ml.type_name_id
     WHERE up.main_character_id = %s
       AND ml.date >= %s AND ml.date < %s
     GROUP BY ms.system_id, ms.name, ms.security_status
-    ORDER BY isk_estimado DESC
+    ORDER BY isk_repr DESC
 """
 
 SQL_BOUNTIES_POR_SISTEMA = """

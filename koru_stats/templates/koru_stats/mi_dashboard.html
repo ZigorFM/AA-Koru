@@ -174,6 +174,13 @@
             <div class="card h-100">
                 <div class="card-header d-flex align-items-center gap-2">
                     <i class="fas fa-users text-info"></i><strong>Por personaje</strong>
+                    <div class="btn-group btn-group-sm ms-auto" id="togglePersonaje">
+                        <button class="btn btn-outline-info" data-pmode="unidades">U</button>
+                        <button class="btn btn-outline-info" data-pmode="m3">m³</button>
+                        <button class="btn btn-outline-info" data-pmode="isk">Bruto</button>
+                        <button class="btn btn-outline-info" data-pmode="isk_comp">Comp.</button>
+                        <button class="btn btn-info active" data-pmode="isk_repr">85%</button>
+                    </div>
                 </div>
                 <div class="card-body">
                     {% if mining_personal %}
@@ -190,7 +197,12 @@
                             <tr>
                                 <td><img src="https://images.evetech.net/characters/{{ r.char_id }}/portrait?size=32" alt="{{ r.nombre }}" onerror="this.style.display='none'"></td>
                                 <td>{{ r.nombre }}</td>
-                                <td class="text-end font-monospace small">{{ r.total_unidades|rknum }} u</td>
+                                <td class="text-end font-monospace small char-val"
+                                    data-u="{{ r.total_unidades }}"
+                                    data-m3="{{ r.total_m3 }}"
+                                    data-isk="{{ r.isk_raw }}"
+                                    data-isk_comp="{{ r.isk_comp }}"
+                                    data-isk_repr="{{ r.isk_repr }}">{{ r.isk_repr|rkisk }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -245,12 +257,17 @@
             <div class="card h-100">
                 <div class="card-header d-flex align-items-center gap-2">
                     <i class="fas fa-map-marker-alt text-info"></i><strong>Por sistema</strong>
+                    <div class="btn-group btn-group-sm ms-auto" id="toggleSistema">
+                        <button class="btn btn-outline-info" data-smode="isk_estimado">Bruto</button>
+                        <button class="btn btn-outline-info" data-smode="isk_comp">Comp.</button>
+                        <button class="btn btn-info active" data-smode="isk_repr">85%</button>
+                    </div>
                 </div>
                 <div class="card-body p-2">
                     {% if mining_sistemas %}
                     <table class="table table-sm table-hover mb-0 align-middle">
                         <thead class="table-dark">
-                            <tr><th>Sistema</th><th class="text-center">Sec</th><th class="text-end">ISK est.</th><th class="text-end">m³</th></tr>
+                            <tr><th>Sistema</th><th class="text-center">Sec</th><th class="text-end" id="hdrSistema">ISK 85%</th><th class="text-end">m³</th></tr>
                         </thead>
                         <tbody>
                             {% for r in mining_sistemas %}
@@ -261,7 +278,10 @@
                                     {% elif r.sec < 0.45 %}<span class="sec-low">{{ r.sec|floatformat:1 }}</span>
                                     {% else %}<span class="sec-high">{{ r.sec|floatformat:1 }}</span>{% endif %}
                                 </td>
-                                <td class="text-end font-monospace small text-warning">{{ r.isk_estimado|rkisk }}</td>
+                                <td class="text-end font-monospace small text-warning sis-isk-val"
+                                    data-isk_estimado="{{ r.isk_estimado }}"
+                                    data-isk_comp="{{ r.isk_comp }}"
+                                    data-isk_repr="{{ r.isk_repr }}">{{ r.isk_repr|rkisk }}</td>
                                 <td class="text-end font-monospace small">{{ r.m3_total|rknum }}</td>
                             </tr>
                             {% endfor %}
@@ -498,8 +518,44 @@
 
     const dataMining = {{ chart_mining_personal|safe }};
     const ctxM = document.getElementById('chartMiningPersonal');
+    let chartPersonaje = null;
+
+    const pModeLabels = { unidades: 'Unidades', m3: 'Volumen m³', isk: 'ISK Bruto', isk_comp: 'ISK Comp.', isk_repr: 'ISK 85%' };
+    const pModeFmt   = { unidades: v => fmtNum(v)+' u', m3: v => fmtNum(v)+' m³', isk: v => fmtISK(v)+' ISK', isk_comp: v => fmtISK(v)+' ISK', isk_repr: v => fmtISK(v)+' ISK' };
+    const fmtNum = v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : Number(v).toFixed(0);
+
+    function buildChartPersonaje(mode) {
+        if (chartPersonaje) chartPersonaje.destroy();
+        const datos = dataMining[mode] || dataMining.unidades;
+        const fmt = pModeFmt[mode];
+        chartPersonaje = new Chart(ctxM, {
+            type: 'doughnut',
+            data: { labels: dataMining.labels, datasets: [{ data: datos, backgroundColor: PALETTE.slice(0, datos.length), hoverOffset: 8 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => ' ' + fmt(ctx.raw) } } } }
+        });
+    }
+
+    function setCharMode(mode) {
+        buildChartPersonaje(mode);
+        const mKey = mode === 'unidades' ? 'u' : mode === 'm3' ? 'm3' : mode;
+        document.querySelectorAll('.char-val').forEach(el => {
+            const v = parseFloat(el.dataset[mKey]) || 0;
+            const isISK = mode !== 'unidades' && mode !== 'm3';
+            el.textContent = isISK ? (v >= 1e9 ? (v/1e9).toFixed(2)+' B' : v >= 1e6 ? (v/1e6).toFixed(2)+' M' : v >= 1e3 ? (v/1e3).toFixed(1)+' K' : v.toFixed(0)) : (v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v.toFixed(0)) + (mode === 'unidades' ? ' u' : ' m³');
+        });
+    }
+
     if (ctxM && dataMining.labels.length) {
-        new Chart(ctxM, { type: 'doughnut', data: { labels: dataMining.labels, datasets: [{ data: dataMining.data, backgroundColor: PALETTE.slice(0, dataMining.data.length), hoverOffset: 8 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => ' ' + new Intl.NumberFormat('en-US').format(ctx.raw) + ' u' } } } } });
+        setCharMode('isk_repr');
+        document.getElementById('togglePersonaje').addEventListener('click', e => {
+            const btn = e.target.closest('button[data-pmode]');
+            if (!btn) return;
+            document.querySelectorAll('#togglePersonaje button').forEach(b => {
+                b.classList.remove('btn-info', 'active'); b.classList.add('btn-outline-info');
+            });
+            btn.classList.remove('btn-outline-info'); btn.classList.add('btn-info', 'active');
+            setCharMode(btn.dataset.pmode);
+        });
     }
 
     const hdrOreLabels = {
@@ -577,6 +633,30 @@
     }
 })();
 
+
+    // ── Por sistema toggle ───────────────────────────────────────────
+    const sisModeLabels = { isk_estimado: 'ISK Bruto', isk_comp: 'ISK Comp.', isk_repr: 'ISK 85%' };
+    function setSisMode(mode) {
+        const hdr = document.getElementById('hdrSistema');
+        if (hdr) hdr.textContent = sisModeLabels[mode];
+        document.querySelectorAll('.sis-isk-val').forEach(el => {
+            const v = parseFloat(el.dataset[mode]) || 0;
+            el.textContent = v >= 1e9 ? (v/1e9).toFixed(2)+' B' : v >= 1e6 ? (v/1e6).toFixed(2)+' M' : v >= 1e3 ? (v/1e3).toFixed(1)+' K' : v.toFixed(0);
+        });
+    }
+    const togSis = document.getElementById('toggleSistema');
+    if (togSis) {
+        setSisMode('isk_repr');
+        togSis.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-smode]');
+            if (!btn) return;
+            togSis.querySelectorAll('button').forEach(b => {
+                b.classList.remove('btn-info', 'active'); b.classList.add('btn-outline-info');
+            });
+            btn.classList.remove('btn-outline-info'); btn.classList.add('btn-info', 'active');
+            setSisMode(btn.dataset.smode);
+        });
+    }
 </script>
 {% endif %}
 {% endblock %}

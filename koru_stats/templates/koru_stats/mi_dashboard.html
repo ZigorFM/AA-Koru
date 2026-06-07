@@ -780,26 +780,14 @@
     }
 })();
 
-    // ── PvP personal — gráfica tendencia ────────────────────────────────
+    // ── PvP personal ────────────────────────────────────────────────────────
     (function() {
-        const dataPvp = {{ chart_pvp_personal|safe }};
-        const ctxPvp  = document.getElementById('chartPvpPersonal');
-        if (!ctxPvp || !dataPvp.labels || !dataPvp.labels.length) return;
-
-        // ISK efficiency por período
-        const iskDest  = dataPvp.isk_destroyed  || [];
-        const iskLost  = dataPvp.isk_lost        || [];
-        const effData  = iskDest.map((d, i) => {
-            const total = d + (iskLost[i] || 0);
-            return total > 0 ? Math.round(d / total * 100) : 0;
-        });
-
-        // ISK efficiency del mes seleccionado (último punto o el que corresponde)
+        {% if pvp_personal %}
+        // ISK Efficiency — independiente del gráfico
         const pvpEffEl  = document.getElementById('pvpEffPct');
         const pvpEffBar = document.getElementById('pvpEffBar');
-        // Calcular ISK eff del período seleccionado directamente desde el template
-        const iskD = {{ pvp_personal.isk_destroyed|default:0 }};
-        const iskL = {{ pvp_personal.isk_lost|default:0 }};
+        const iskD = parseFloat("{{ pvp_personal.isk_destroyed|default:0 }}") || 0;
+        const iskL = parseFloat("{{ pvp_personal.isk_lost|default:0 }}") || 0;
         const totalIsk = iskD + iskL;
         const curEff = totalIsk > 0 ? Math.round(iskD / totalIsk * 100) : 0;
         if (pvpEffEl) {
@@ -810,64 +798,53 @@
             pvpEffBar.style.width = curEff + '%';
             pvpEffBar.className = 'progress-bar ' + (curEff >= 60 ? 'bg-success' : curEff >= 40 ? 'bg-warning' : 'bg-danger');
         }
+        {% endif %}
 
-        new Chart(ctxPvp, {
-            type: 'bar',
-            data: {
-                labels: dataPvp.labels,
-                datasets: [
-                    {
-                        label: 'Ships Killed',
-                        data:  dataPvp.ships_destroyed,
-                        backgroundColor: 'rgba(16,185,129,0.7)',
-                        borderColor: '#10b981',
-                        borderWidth: 1,
-                        yAxisID: 'yShips',
-                        order: 2,
-                    },
-                    {
-                        label: 'Ships Lost',
-                        data:  dataPvp.ships_lost,
-                        backgroundColor: 'rgba(239,68,68,0.5)',
-                        borderColor: '#ef4444',
-                        borderWidth: 1,
-                        yAxisID: 'yShips',
-                        order: 3,
-                    },
-                    {
-                        label: 'ISK Eff. %',
-                        data:  effData,
-                        type: 'line',
-                        borderColor: '#f59e0b',
-                        backgroundColor: 'transparent',
-                        borderWidth: 2,
-                        pointBackgroundColor: '#f59e0b',
-                        pointRadius: 4,
-                        tension: 0.3,
-                        yAxisID: 'yEff',
-                        order: 1,
-                    },
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { position: 'bottom', labels: { boxWidth: 12 } },
-                    tooltip: {
-                        callbacks: {
-                            label: ctx => {
-                                if (ctx.dataset.label === 'ISK Eff. %') return ' ISK Eff. ' + ctx.raw + '%';
-                                return ' ' + ctx.dataset.label + ': ' + ctx.raw;
-                            }
-                        }
-                    }
+        // Gráfica — se inicializa al mostrar el tab (fix Chart.js en tabs ocultos)
+        const dataPvp = {{ chart_pvp_personal|safe }};
+        if (!dataPvp.labels || !dataPvp.labels.length) return;
+
+        const iskDest = dataPvp.isk_destroyed || [];
+        const iskLost = dataPvp.isk_lost      || [];
+        const effData = iskDest.map((d, i) => {
+            const total = d + (iskLost[i] || 0);
+            return total > 0 ? Math.round(d / total * 100) : 0;
+        });
+
+        let chartPvpInst = null;
+        function buildPvpChart() {
+            const ctxPvp = document.getElementById('chartPvpPersonal');
+            if (!ctxPvp || chartPvpInst) return;
+            chartPvpInst = new Chart(ctxPvp, {
+                type: 'bar',
+                data: {
+                    labels: dataPvp.labels,
+                    datasets: [
+                        { label: 'Ships Killed', data: dataPvp.ships_destroyed, backgroundColor: 'rgba(16,185,129,0.7)', borderColor: '#10b981', borderWidth: 1, yAxisID: 'yShips', order: 2 },
+                        { label: 'Ships Lost',   data: dataPvp.ships_lost,      backgroundColor: 'rgba(239,68,68,0.5)',  borderColor: '#ef4444', borderWidth: 1, yAxisID: 'yShips', order: 3 },
+                        { label: 'ISK Eff. %',   data: effData, type: 'line', borderColor: '#f59e0b', backgroundColor: 'transparent', borderWidth: 2, pointBackgroundColor: '#f59e0b', pointRadius: 4, tension: 0.3, yAxisID: 'yEff', order: 1 },
+                    ]
                 },
-                scales: {
-                    yShips: { position: 'left',  beginAtZero: true, title: { display: true, text: 'Ships' } },
-                    yEff:   { position: 'right', beginAtZero: true, max: 100, title: { display: true, text: 'ISK Eff. %' }, grid: { drawOnChartArea: false } },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12 } },
+                        tooltip: { callbacks: { label: ctx => ctx.dataset.label === 'ISK Eff. %' ? ' ISK Eff. ' + ctx.raw + '%' : ' ' + ctx.dataset.label + ': ' + ctx.raw } }
+                    },
+                    scales: {
+                        yShips: { position: 'left',  beginAtZero: true },
+                        yEff:   { position: 'right', beginAtZero: true, max: 100, grid: { drawOnChartArea: false } },
+                    }
                 }
-            }
+            });
+        }
+
+        // Si el tab ya está activo (p.ej. URL con hash), renderiza ahora; si no, espera al click
+        if (document.getElementById('tabPvP') && document.getElementById('tabPvP').classList.contains('show')) {
+            buildPvpChart();
+        }
+        document.querySelectorAll('button[data-bs-target="#tabPvP"]').forEach(btn => {
+            btn.addEventListener('shown.bs.tab', buildPvpChart);
         });
     })();
 

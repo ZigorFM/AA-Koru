@@ -731,7 +731,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                             own_ship = victim.get("ship_type_id", 0)
                             CharacterKillRecord.objects.update_or_create(
                                 main_character_id=c["main_char_id"],
-                                killmail_id=killmail_id,
+                                killmail_id=km_id,
                                 defaults=dict(
                                     main_character_name=c["main_char_name"],
                                     period=period,
@@ -771,7 +771,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                             # registro individual — nave víctima
                             CharacterKillRecord.objects.update_or_create(
                                 main_character_id=c["main_char_id"],
-                                killmail_id=killmail_id,
+                                killmail_id=km_id,
                                 defaults=dict(
                                     main_character_name=c["main_char_name"],
                                     period=period,

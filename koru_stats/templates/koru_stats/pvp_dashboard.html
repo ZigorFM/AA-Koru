@@ -169,23 +169,23 @@
                 <thead class="table-dark"><tr>
                   <th style="width:36px">#</th><th>Piloto</th>
                   <th class="text-end">Final Blows</th><th class="text-end">Participaciones</th>
-                  <th class="text-end">Solo</th><th class="text-end">ISK Dest.</th>
+                  <th class="text-end">Solo</th><th class="text-end">Ships Killed</th>
                 </tr></thead>
                 <tbody>
-                  {% for r in top_isk_destroyed %}
+                  {% for r in top_final_blows %}
                   <tr>
                     <td>{% if forloop.counter == 1 %}<i class="fas fa-trophy medal-1"></i>{% elif forloop.counter == 2 %}<i class="fas fa-trophy medal-2"></i>{% elif forloop.counter == 3 %}<i class="fas fa-trophy medal-3"></i>{% else %}<span class="text-muted small">{{ forloop.counter }}</span>{% endif %}</td>
                     <td><img src="https://images.evetech.net/characters/{{ r.main_character_id }}/portrait?size=32" class="portrait me-2" alt="" onerror="this.src='https://images.evetech.net/characters/0/portrait?size=32'">{{ r.main_character_name }}</td>
-                    <td class="text-end text-success fw-bold">{{ r.ships_destroyed }}</td>
-                    <td class="text-end text-muted">—</td>
-                    <td class="text-end text-muted">—</td>
-                    <td class="text-end">{{ r.isk_destroyed|rkisk }}</td>
+                    <td class="text-end text-warning fw-bold">{{ r.final_blows }}</td>
+                    <td class="text-end" style="color:#8b5cf6">{{ r.participations }}</td>
+                    <td class="text-end" style="color:#06b6d4">{{ r.solo_kills }}</td>
+                    <td class="text-end text-success">{{ r.ships_destroyed }}</td>
                   </tr>
+                  {% empty %}<tr><td colspan="6" class="text-center text-muted py-3">Sin datos</td></tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
-            <div class="px-3 pb-2"><small class="text-muted">Final Blows = ships_destroyed (tiro de gracia)</small></div>
           </div>
 
           {# Participaciones #}
@@ -280,7 +280,7 @@
                   <tr>
                     <td>{% if forloop.counter == 1 %}<i class="fas fa-trophy medal-1"></i>{% elif forloop.counter == 2 %}<i class="fas fa-trophy medal-2"></i>{% elif forloop.counter == 3 %}<i class="fas fa-trophy medal-3"></i>{% else %}<span class="text-muted small">{{ forloop.counter }}</span>{% endif %}</td>
                     <td><img src="https://images.evetech.net/characters/{{ r.main_character_id }}/portrait?size=32" class="portrait me-2" alt="" onerror="this.src='https://images.evetech.net/characters/0/portrait?size=32'">{{ r.main_character_name }}</td>
-                    <td class="text-end fw-bold {% if r._eff >= 60 %}text-success{% elif r._eff >= 40 %}text-warning{% else %}text-danger{% endif %}">{{ r._eff }}%</td>
+                    <td class="text-end fw-bold {% if r.eff_pct >= 60 %}text-success{% elif r.eff_pct >= 40 %}text-warning{% else %}text-danger{% endif %}">{{ r.eff_pct }}%</td>
                     <td class="text-end text-success">{{ r.ships_destroyed }}</td>
                     <td class="text-end">{{ r.isk_destroyed|rkisk }}</td>
                     <td class="text-end text-danger">{{ r.isk_lost|rkisk }}</td>

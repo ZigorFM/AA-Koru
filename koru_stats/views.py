@@ -2097,8 +2097,20 @@ def pvp_dashboard(request):
         top_ships_killed = list(
             CharacterMonthlyPvp.objects
             .filter(period=periodo_sel, corporation_id__in=corp_ids)
-            .order_by("-ships_destroyed")[:10]
-            .values("main_character_name", "main_character_id", "ships_destroyed", "ships_lost")
+            .order_by("-ships_destroyed")[:15]
+            .values("main_character_name", "main_character_id",
+                    "ships_destroyed", "ships_lost", "isk_destroyed")
+        )
+        for r in top_ships_killed:
+            r["isk_destroyed"] = float(r["isk_destroyed"] or 0)
+
+        # Top por final blows (tiros de gracia)
+        top_final_blows = list(
+            CharacterMonthlyPvp.objects
+            .filter(period=periodo_sel, corporation_id__in=corp_ids, final_blows__gt=0)
+            .order_by("-final_blows")[:15]
+            .values("main_character_name", "main_character_id",
+                    "final_blows", "participations", "solo_kills", "ships_destroyed")
         )
 
         # Top ISK efficiency (mínimo 5 kills para contar)
@@ -2108,11 +2120,20 @@ def pvp_dashboard(request):
                     ships_destroyed__gte=5)
             .order_by("-isk_destroyed")
         )
+        eff_list = []
         for r in top_efficiency:
             total = r.isk_destroyed + r.isk_lost
-            r._eff = round(float(r.isk_destroyed) / float(total) * 100, 1) if total else 0.0
-        top_efficiency.sort(key=lambda r: r._eff, reverse=True)
-        top_efficiency = top_efficiency[:10]
+            eff_pct = round(float(r.isk_destroyed) / float(total) * 100, 1) if total else 0.0
+            eff_list.append({
+                "main_character_name": r.main_character_name,
+                "main_character_id":   r.main_character_id,
+                "eff_pct":             eff_pct,
+                "ships_destroyed":     r.ships_destroyed,
+                "isk_destroyed":       float(r.isk_destroyed),
+                "isk_lost":            float(r.isk_lost),
+            })
+        eff_list.sort(key=lambda r: r["eff_pct"], reverse=True)
+        top_efficiency = eff_list[:10]
 
         # Top por participaciones
         top_participations = list(
@@ -2182,6 +2203,8 @@ def pvp_dashboard(request):
         **selector_ctx,
         "corp_names":         corp_names,
         "top_isk_destroyed":  top_isk_destroyed,
+        "top_ships_killed":   top_ships_killed,
+        "top_final_blows":    top_final_blows,
         "top_ships_killed":   top_ships_killed,
         "top_efficiency":     top_efficiency,
         "top_participations": top_participations,

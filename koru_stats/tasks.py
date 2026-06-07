@@ -21,6 +21,7 @@ POBLACION INICIAL — ejecuta esto UNA VEZ en el shell de Django:
     run_koru_aggregations(full=True)
 """
 
+import calendar
 import logging
 import time
 import traceback
@@ -639,34 +640,40 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         corp_id    = char["corporation_id"]
 
         for period in periods:
-            anio, mes = period.split("-")
+            anio_i, mes_i = int(period.split("-")[0]), int(period.split("-")[1])
+            last_day = calendar.monthrange(anio_i, mes_i)[1]
+            t_start  = f"{anio_i}{mes_i:02d}01000000"
+            t_end    = f"{anio_i}{mes_i:02d}{last_day:02d}235959"
+            time_filter = f"startTime/{t_start}/endTime/{t_end}/"
 
             # ── Kills ──
-            url_kills = f"{ZKILL_BASE}/kills/characterID/{char_id}/year/{anio}/month/{mes}/"
+            url_kills = f"{ZKILL_BASE}/kills/characterID/{char_id}/{time_filter}"
             kills = _zkill_get(url_kills)
             total_calls += 1
-            if kills:
+            kills_dicts = [k for k in kills if isinstance(k, dict)]
+            if kills_dicts:
                 key = (main_id, period)
                 agg[key]["main_char_name"] = main_name
                 agg[key]["corporation_id"] = corp_id
-                agg[key]["ships_destroyed"] += len(kills)
+                agg[key]["ships_destroyed"] += len(kills_dicts)
                 agg[key]["isk_destroyed"]   += sum(
                     float(k.get("zkb", {}).get("totalValue", 0) or 0)
-                    for k in kills
+                    for k in kills_dicts
                 )
 
             # ── Losses ──
-            url_losses = f"{ZKILL_BASE}/losses/characterID/{char_id}/year/{anio}/month/{mes}/"
+            url_losses = f"{ZKILL_BASE}/losses/characterID/{char_id}/{time_filter}"
             losses = _zkill_get(url_losses)
             total_calls += 1
-            if losses:
+            losses_dicts = [l for l in losses if isinstance(l, dict)]
+            if losses_dicts:
                 key = (main_id, period)
                 agg[key]["main_char_name"] = main_name
                 agg[key]["corporation_id"] = corp_id
-                agg[key]["ships_lost"] += len(losses)
+                agg[key]["ships_lost"] += len(losses_dicts)
                 agg[key]["isk_lost"]   += sum(
                     float(l.get("zkb", {}).get("totalValue", 0) or 0)
-                    for l in losses
+                    for l in losses_dicts
                 )
 
     # ── Persistir ──

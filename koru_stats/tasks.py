@@ -725,18 +725,28 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                             agg[key]["isk_lost"]    += value
 
                     else:
-                        for att in esi.get("attackers", []):
-                            if not att.get("final_blow"):
-                                continue
+                        attackers  = esi.get("attackers", [])
+                        is_solo    = zkb.get("solo", False)
+                        max_dmg    = max((a.get("damage_done", 0) for a in attackers), default=0)
+                        for att in attackers:
                             char_id = att.get("character_id")
-                            if char_id and char_id in char_map:
-                                c   = char_map[char_id]
-                                key = (c["main_char_id"], period)
-                                agg[key]["main_char_name"] = c["main_char_name"]
-                                agg[key]["corporation_id"] = c["corporation_id"]
+                            if not char_id or char_id not in char_map:
+                                continue
+                            c   = char_map[char_id]
+                            key = (c["main_char_id"], period)
+                            agg[key]["main_char_name"] = c["main_char_name"]
+                            agg[key]["corporation_id"] = c["corporation_id"]
+                            agg[key]["participations"]  += 1
+                            dmg = att.get("damage_done", 0)
+                            agg[key]["damage_dealt"]    += dmg
+                            if att.get("final_blow"):
                                 agg[key]["ships_destroyed"] += 1
                                 agg[key]["isk_destroyed"]   += value
-                            break
+                                agg[key]["final_blows"]     += 1
+                                if is_solo:
+                                    agg[key]["solo_kills"]  += 1
+                            elif dmg == max_dmg and max_dmg > 0:
+                                agg[key]["top_damage_kills"] += 1
 
                 if all_too_old:
                     done = True

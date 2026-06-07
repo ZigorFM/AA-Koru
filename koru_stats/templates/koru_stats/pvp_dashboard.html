@@ -1,0 +1,430 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Rekium PvP{% endblock %}
+
+{% block page_title %}
+    {% translate "Panel PvP" as page_header %}
+    {% translate "Estadísticas de combate de la corp" as optional_subtitle %}
+    {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:dashboard" as url_dash %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_dash title="Dashboard" fa_icon="fa-solid fa-chart-bar" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.chart-container { position: relative; height: 280px; }
+.pilot-portrait { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.medal-1 { color: #ffc107; }
+.medal-2 { color: #adb5bd; }
+.medal-3 { color: #cd7f32; }
+.eff-bar { height: 6px; border-radius: 3px; transition: width 0.4s ease; }
+.eff-good { background: #10b981; }
+.eff-mid  { background: #f59e0b; }
+.eff-bad  { background: #ef4444; }
+.text-kill  { color: #10b981; }
+.text-death { color: #ef4444; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+    {# Barra de filtros #}
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body py-2 d-flex align-items-center gap-3 flex-wrap">
+                    <i class="fas fa-crosshairs text-danger"></i>
+                    <strong>Período:</strong>
+                    {% include "koru_stats/includes/periodo_selector.html" %}
+                    <span class="text-muted small">Mostrando <strong>{{ mes }}</strong></span>
+                    {% if corp_names %}
+                    <span class="ms-auto text-muted small">
+                        <i class="fas fa-building me-1"></i>
+                        {% for name in corp_names %}{{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if error_pvp %}
+    <div class="alert alert-warning">
+        <i class="fas fa-exclamation-triangle me-2"></i>
+        No se pudieron cargar los datos PvP. Asegúrate de que <code>aastatistics</code> esté instalado y que hayas ejecutado <code>run_koru_aggregations(full=True)</code>.
+    </div>
+    {% endif %}
+
+    {# Tarjetas resumen #}
+    {% if totals %}
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="h2 text-success mb-0">{{ totals.total_kills }}</div>
+                    <div class="text-muted small">Ships destruidos</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="h2 text-danger mb-0">{{ totals.total_deaths }}</div>
+                    <div class="text-muted small">Ships perdidos</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <div class="h2 text-warning mb-0">{{ totals.total_isk_destroyed|floatformat:0 }}M</div>
+                    <div class="text-muted small">ISK destruido</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    {% if totals.corp_efficiency >= 50 %}
+                    <div class="h2 text-success mb-0">{{ totals.corp_efficiency }}%</div>
+                    {% else %}
+                    <div class="h2 text-danger mb-0">{{ totals.corp_efficiency }}%</div>
+                    {% endif %}
+                    <div class="text-muted small">ISK efficiency corp</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Top ISK destroyed + Top ships killed #}
+    <div class="row g-4 mb-4">
+
+        {# Top ISK destroyed #}
+        <div class="col-12 col-xl-7">
+            <div class="card h-100">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fas fa-skull-crossbones text-danger"></i>
+                    <strong>Top ISK Destroyed</strong>
+                </div>
+                <div class="card-body">
+                    {% if top_isk_destroyed %}
+                    <div class="chart-container mb-3">
+                        <canvas id="chartTopIsk"></canvas>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover align-middle">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th style="width:36px">#</th>
+                                    <th>Piloto</th>
+                                    <th class="text-end">Kills</th>
+                                    <th class="text-end">Deaths</th>
+                                    <th class="text-end">ISK Dest.</th>
+                                    <th class="text-end">Efficiency</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for r in top_isk_destroyed %}
+                                <tr>
+                                    <td>
+                                        {% if forloop.counter == 1 %}<i class="fas fa-trophy medal-1"></i>
+                                        {% elif forloop.counter == 2 %}<i class="fas fa-trophy medal-2"></i>
+                                        {% elif forloop.counter == 3 %}<i class="fas fa-trophy medal-3"></i>
+                                        {% else %}<span class="text-muted">{{ forloop.counter }}</span>{% endif %}
+                                    </td>
+                                    <td>
+                                        <img src="https://images.evetech.net/characters/{{ r.main_character_id }}/portrait?size=32"
+                                             class="pilot-portrait me-2" alt=""
+                                             onerror="this.src='https://images.evetech.net/characters/0/portrait?size=32'">
+                                        {{ r.main_character_name }}
+                                    </td>
+                                    <td class="text-end text-kill fw-bold">{{ r.ships_destroyed }}</td>
+                                    <td class="text-end text-death">{{ r.ships_lost }}</td>
+                                    <td class="text-end">
+                                        <span title="{{ r.isk_destroyed|floatformat:0 }} ISK">
+                                            {% widthratio r.isk_destroyed 1000000 1 %}M
+                                        </span>
+                                    </td>
+                                    <td class="text-end" style="min-width:90px">
+                                        <div class="d-flex align-items-center gap-1 justify-content-end">
+                                            <small>{{ r.isk_efficiency }}%</small>
+                                            <div style="width:50px">
+                                                <div class="eff-bar {% if r.isk_efficiency >= 60 %}eff-good{% elif r.isk_efficiency >= 40 %}eff-mid{% else %}eff-bad{% endif %}"
+                                                     style="width:{{ r.isk_efficiency }}%"></div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center text-muted py-4">
+                        <i class="fas fa-dove fa-2x mb-2"></i>
+                        <p>Sin datos PvP para este período.<br>
+                        Ejecuta <code>run_koru_aggregations(full=True)</code> para poblar.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {# Top ships killed + ISK efficiency #}
+        <div class="col-12 col-xl-5">
+            <div class="row g-4">
+
+                {# Top ships killed #}
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex align-items-center gap-2">
+                            <i class="fas fa-fire text-warning"></i>
+                            <strong>Top Ships Destroyed</strong>
+                        </div>
+                        <div class="card-body p-0">
+                            {% if top_ships_killed %}
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th style="width:36px">#</th>
+                                        <th>Piloto</th>
+                                        <th class="text-end">Kills</th>
+                                        <th class="text-end">Deaths</th>
+                                        <th class="text-end">K/D</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for r in top_ships_killed %}
+                                    <tr>
+                                        <td>
+                                            {% if forloop.counter == 1 %}<i class="fas fa-trophy medal-1"></i>
+                                            {% elif forloop.counter == 2 %}<i class="fas fa-trophy medal-2"></i>
+                                            {% elif forloop.counter == 3 %}<i class="fas fa-trophy medal-3"></i>
+                                            {% else %}<span class="text-muted">{{ forloop.counter }}</span>{% endif %}
+                                        </td>
+                                        <td>
+                                            <img src="https://images.evetech.net/characters/{{ r.main_character_id }}/portrait?size=32"
+                                                 class="pilot-portrait me-2" alt=""
+                                                 onerror="this.src='https://images.evetech.net/characters/0/portrait?size=32'">
+                                            {{ r.main_character_name }}
+                                        </td>
+                                        <td class="text-end text-kill fw-bold">{{ r.ships_destroyed }}</td>
+                                        <td class="text-end text-death">{{ r.ships_lost }}</td>
+                                        <td class="text-end">
+                                            {% if r.ships_lost > 0 %}
+                                                {% widthratio r.ships_destroyed r.ships_lost 100 as kd_x100 %}
+                                                {{ kd_x100|divisibleby:100 }}
+                                                <small class="text-muted">
+                                                    {% if r.ships_lost %}{{ r.ships_destroyed|floatformat:0 }}/{{ r.ships_lost }}{% else %}∞{% endif %}
+                                                </small>
+                                            {% else %}
+                                                <span class="text-success">∞</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p class="text-muted text-center py-3">Sin datos</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                {# Top ISK efficiency (mín. 5 kills) #}
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex align-items-center gap-2">
+                            <i class="fas fa-star text-info"></i>
+                            <strong>ISK Efficiency</strong>
+                            <small class="text-muted">(mín. 5 kills)</small>
+                        </div>
+                        <div class="card-body p-0">
+                            {% if top_efficiency %}
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th style="width:36px">#</th>
+                                        <th>Piloto</th>
+                                        <th class="text-end">Efficiency</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for r in top_efficiency %}
+                                    <tr>
+                                        <td><span class="text-muted">{{ forloop.counter }}</span></td>
+                                        <td>
+                                            <img src="https://images.evetech.net/characters/{{ r.main_character_id }}/portrait?size=32"
+                                                 class="pilot-portrait me-2" alt=""
+                                                 onerror="this.src='https://images.evetech.net/characters/0/portrait?size=32'">
+                                            {{ r.main_character_name }}
+                                        </td>
+                                        <td class="text-end">
+                                            <div class="d-flex align-items-center gap-2 justify-content-end">
+                                                <span class="fw-bold {% if r._eff >= 60 %}text-success{% elif r._eff >= 40 %}text-warning{% else %}text-danger{% endif %}">
+                                                    {{ r._eff }}%
+                                                </span>
+                                                <div style="width:50px">
+                                                    <div class="eff-bar {% if r._eff >= 60 %}eff-good{% elif r._eff >= 40 %}eff-mid{% else %}eff-bad{% endif %}"
+                                                         style="width:{{ r._eff }}%"></div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p class="text-muted text-center py-3">Sin datos (mín. 5 kills requeridos)</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    {# Tendencia histórica PvP #}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fas fa-chart-line text-danger"></i>
+                    <strong>Tendencia PvP — últimos 6 meses</strong>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="chartTendenciaPvp"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_javascript %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const CHART_TOP_ISK    = {{ chart_top_isk|safe }};
+const CHART_TEND_PVP   = {{ chart_tendencia_pvp|safe }};
+
+Chart.defaults.color = '#adb5bd';
+
+// ── Top ISK Destroyed (horizontal bar)
+(function () {
+    const ctx = document.getElementById('chartTopIsk');
+    if (!ctx || !CHART_TOP_ISK.labels.length) return;
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: CHART_TOP_ISK.labels,
+            datasets: [{
+                label: 'ISK Destruido',
+                data:  CHART_TOP_ISK.data,
+                backgroundColor: 'rgba(239,68,68,0.7)',
+                borderColor: 'rgba(239,68,68,1)',
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const v = ctx.parsed.x;
+                            return ' ' + (v/1e9).toFixed(2) + ' B ISK';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255,255,255,0.07)' },
+                    ticks: {
+                        callback: v => v >= 1e9 ? (v/1e9).toFixed(1)+'B' : (v/1e6).toFixed(0)+'M'
+                    }
+                },
+                y: { grid: { display: false } }
+            }
+        }
+    });
+})();
+
+// ── Tendencia PvP (líneas ISK + barras ships)
+(function () {
+    const ctx = document.getElementById('chartTendenciaPvp');
+    if (!ctx || !CHART_TEND_PVP.labels.length) return;
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: CHART_TEND_PVP.labels,
+            datasets: [
+                {
+                    type: 'line',
+                    label: 'ISK Destruido',
+                    data: CHART_TEND_PVP.isk_destroyed,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16,185,129,0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    yAxisID: 'yIsk',
+                },
+                {
+                    type: 'line',
+                    label: 'ISK Perdido',
+                    data: CHART_TEND_PVP.isk_lost,
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239,68,68,0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    yAxisID: 'yIsk',
+                },
+                {
+                    type: 'bar',
+                    label: 'Ships destruidos',
+                    data: CHART_TEND_PVP.ships_destroyed,
+                    backgroundColor: 'rgba(16,185,129,0.4)',
+                    yAxisID: 'yShips',
+                },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index' },
+            plugins: { legend: { position: 'top' } },
+            scales: {
+                yIsk: {
+                    type: 'linear',
+                    position: 'left',
+                    grid: { color: 'rgba(255,255,255,0.07)' },
+                    ticks: {
+                        callback: v => v >= 1e9 ? (v/1e9).toFixed(1)+'B' : (v/1e6).toFixed(0)+'M'
+                    }
+                },
+                yShips: {
+                    type: 'linear',
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: { callback: v => v.toFixed(0) }
+                }
+            }
+        }
+    });
+})();
+</script>
+{% endblock %}

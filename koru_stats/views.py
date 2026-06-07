@@ -10,7 +10,7 @@ from django.db import connection
 from django.db.models import F, Sum
 from django.shortcuts import render
 
-from .models import CharacterMonthlyOre, CharacterMonthlySummary, TrackedCorporation
+from .models import CharacterMonthlyOre, CharacterMonthlySummary, CharacterMonthlyPvp, TrackedCorporation
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,15 @@ def _get_periodos_con_datos(tipo="general"):
                     WHERE amount > 0
                     ORDER BY periodo DESC
                 """)
+            elif tipo == "pvp":
+                rows = list(
+                    CharacterMonthlyPvp.objects
+                    .values_list("period", flat=True)
+                    .distinct()
+                    .order_by("-period")
+                )
+                cache.set(cache_key, _build_periodos_list(rows), timeout=600)
+                return cache.get(cache_key)
             else:
                 # Consulta rápida sobre tabla pre-agregada (índice simple vs scan corptools)
                 rows = list(
@@ -294,6 +303,52 @@ def _summary_tendencias_mineria(corp_ids, n_months=6):
     return [dict(r) for r in rows]
 
 
+
+
+def _summary_top_pvp(corp_ids, period, limit=10):
+    """Top PvP del período por ISK destruido, desde CharacterMonthlyPvp."""
+    qs = (CharacterMonthlyPvp.objects
+          .filter(period=period, corporation_id__in=corp_ids)
+          .order_by("-isk_destroyed")[:limit])
+    return [
+        {
+            "nombre":         r.main_character_name,
+            "char_id":        r.main_character_id,
+            "ships_destroyed": r.ships_destroyed,
+            "ships_lost":      r.ships_lost,
+            "isk_destroyed":  float(r.isk_destroyed),
+            "isk_lost":       float(r.isk_lost),
+            "isk_efficiency": round(r.isk_efficiency, 1),
+        }
+        for r in qs
+    ]
+
+
+def _summary_pvp_tendencias(corp_ids, n_months=6):
+    """Tendencia PvP mensual de los últimos N meses."""
+    from datetime import datetime as dt
+    hoy = dt.now()
+    periods = []
+    for i in range(n_months):
+        mes  = hoy.month - i
+        anio = hoy.year
+        if mes <= 0:
+            mes  += 12
+            anio -= 1
+        periods.append(f"{anio}-{mes:02d}")
+
+    rows = (CharacterMonthlyPvp.objects
+            .filter(period__in=periods, corporation_id__in=corp_ids)
+            .values("period")
+            .annotate(
+                total_ships_destroyed=Sum("ships_destroyed"),
+                total_ships_lost=Sum("ships_lost"),
+                total_isk_destroyed=Sum("isk_destroyed"),
+                total_isk_lost=Sum("isk_lost"),
+            )
+            .order_by("period"))
+    return [dict(r) for r in rows]
+
 # ---------------------------------------------------------------------------
 # SQL base — el filtro de corp se inyecta dinámicamente
 # (se mantienen para corp_dashboard y vistas que no tienen tablas resumen)
@@ -493,6 +548,15 @@ def dashboard(request):
         logger.error("koru_stats tendencias_mineria: %s", e)
         tendencias_mineria = []
 
+    # ── Top PvP — desde CharacterMonthlyPvp ──
+    top_pvp = []
+    error_pvp = False
+    try:
+        top_pvp = _summary_top_pvp(corp_ids, periodo_sel)
+    except Exception as e:
+        logger.error("koru_stats top_pvp: %s", e)
+        error_pvp = True
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(SQL_TENDENCIAS_BOUNTIES)
@@ -534,6 +598,13 @@ def dashboard(request):
             "mineria":  [min_by_period.get(p, 0) for p in periodos_tend],
             "bounties": [bou_by_period.get(p, 0) for p in periodos_tend],
             "unidades": [uni_by_period.get(p, 0) for p in periodos_tend],
+        }),
+        "top_pvp":     top_pvp,
+        "error_pvp":   error_pvp,
+        "chart_pvp": _to_json({
+            "labels":          [r["nombre"] for r in top_pvp],
+            "isk_destroyed":   [r["isk_destroyed"] for r in top_pvp],
+            "ships_destroyed": [r["ships_destroyed"] for r in top_pvp],
         }),
     }
     return render(request, "koru_stats/dashboard.html", context)
@@ -591,6 +662,32 @@ def mi_dashboard(request):
     except Exception as e:
         logger.error("koru_stats ore_breakdown personal: %s", e)
         error_ore = True
+
+    # ── PvP personal — desde CharacterMonthlyPvp ──
+    pvp_personal = None
+    pvp_tendencia = []
+    error_pvp_personal = False
+    try:
+        pvp_personal = CharacterMonthlyPvp.objects.filter(
+            main_character_id=main.character_id, period=periodo_sel
+        ).first()
+        # Historial últimos 6 meses para gráfica
+        from datetime import datetime as dt
+        hoy = dt.now()
+        pvp_periods = []
+        for i in range(6):
+            ms = hoy.month - i; ay = hoy.year
+            if ms <= 0: ms += 12; ay -= 1
+            pvp_periods.append(f"{ay}-{ms:02d}")
+        pvp_tendencia = list(
+            CharacterMonthlyPvp.objects
+            .filter(main_character_id=main.character_id, period__in=pvp_periods)
+            .order_by("period")
+            .values("period", "ships_destroyed", "ships_lost", "isk_destroyed", "isk_lost")
+        )
+    except Exception as e:
+        logger.error("koru_stats pvp_personal: %s", e)
+        error_pvp_personal = True
 
     mining_sistemas, bounties_sistemas = [], []
     error_mining_sis = error_bounties_sis = False
@@ -721,6 +818,16 @@ def mi_dashboard(request):
         "error_wallet_personal": error_wallet_personal,
         "chart_ingresos_p":      _to_json({"labels": [r["cat"] for r in ingresos_donut], "data": [r["total"] for r in ingresos_donut]}),
         "chart_gastos_p":        _to_json({"labels": [r["cat"] for r in gastos_donut],   "data": [r["total"] for r in gastos_donut]}),
+        "pvp_personal":        pvp_personal,
+        "pvp_tendencia":       pvp_tendencia,
+        "error_pvp_personal":  error_pvp_personal,
+        "chart_pvp_personal":  _to_json({
+            "labels":          [r["period"] for r in pvp_tendencia],
+            "isk_destroyed":   [float(r["isk_destroyed"] or 0) for r in pvp_tendencia],
+            "isk_lost":        [float(r["isk_lost"] or 0) for r in pvp_tendencia],
+            "ships_destroyed": [int(r["ships_destroyed"] or 0) for r in pvp_tendencia],
+            "ships_lost":      [int(r["ships_lost"] or 0) for r in pvp_tendencia],
+        }),
     }
     return render(request, "koru_stats/mi_dashboard.html", context)
 
@@ -1849,3 +1956,115 @@ def _categorize_wallet(rows, categories, only_income=True):
         })
 
     return sorted(result, key=lambda x: x["total"], reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Panel PvP / FC — requiere permiso pvp_access o fc_access
+# ---------------------------------------------------------------------------
+
+@permission_required("koru_stats.pvp_access")
+def pvp_dashboard(request):
+    """
+    Dashboard PvP detallado. Disponible para usuarios con pvp_access (o fc_access).
+    Muestra: top killers, ISK efficiency ranking, tendencia histórica.
+    """
+    mes, anio, inicio, fin, periodo_sel = _parse_periodo(request)
+    periodos_datos = _get_periodos_con_datos("pvp")
+    selector_ctx   = _build_selector_context(periodos_datos, periodo_sel, anio)
+    corp_ids   = _get_corp_ids()
+    corp_names = list(TrackedCorporation.objects.filter(is_active=True).values_list("corporation_name", flat=True))
+
+    # Top killers por ISK destroyed
+    top_isk_destroyed = []
+    # Top killers por ships destroyed
+    top_ships_killed = []
+    # Top ISK efficiency (min 5 kills)
+    top_efficiency = []
+    # Tendencia mensual agregada
+    pvp_tendencia = []
+    error_pvp = False
+
+    if mes == 1:
+        period_ant = f"{anio - 1}-12"
+    else:
+        period_ant = f"{anio}-{mes - 1:02d}"
+
+    try:
+        # Top por ISK destroyed
+        top_isk_destroyed = list(
+            CharacterMonthlyPvp.objects
+            .filter(period=periodo_sel, corporation_id__in=corp_ids)
+            .order_by("-isk_destroyed")[:15]
+            .values("main_character_name", "main_character_id",
+                    "ships_destroyed", "ships_lost", "isk_destroyed", "isk_lost")
+        )
+        for r in top_isk_destroyed:
+            total = float(r["isk_destroyed"] or 0) + float(r["isk_lost"] or 0)
+            r["isk_efficiency"] = round(float(r["isk_destroyed"] or 0) / total * 100, 1) if total else 0.0
+            r["isk_destroyed"]  = float(r["isk_destroyed"] or 0)
+            r["isk_lost"]       = float(r["isk_lost"] or 0)
+
+        # Top por ships killed
+        top_ships_killed = list(
+            CharacterMonthlyPvp.objects
+            .filter(period=periodo_sel, corporation_id__in=corp_ids)
+            .order_by("-ships_destroyed")[:10]
+            .values("main_character_name", "main_character_id", "ships_destroyed", "ships_lost")
+        )
+
+        # Top ISK efficiency (mínimo 5 kills para contar)
+        top_efficiency = list(
+            CharacterMonthlyPvp.objects
+            .filter(period=periodo_sel, corporation_id__in=corp_ids,
+                    ships_destroyed__gte=5)
+            .order_by("-isk_destroyed")
+        )
+        for r in top_efficiency:
+            total = r.isk_destroyed + r.isk_lost
+            r._eff = round(float(r.isk_destroyed) / float(total) * 100, 1) if total else 0.0
+        top_efficiency.sort(key=lambda r: r._eff, reverse=True)
+        top_efficiency = top_efficiency[:10]
+
+        # Tendencia mensual agregada de la corp
+        pvp_tendencia = _summary_pvp_tendencias(corp_ids)
+
+    except Exception as e:
+        logger.error("koru_stats pvp_dashboard: %s", e)
+        error_pvp = True
+
+    # Totales del mes
+    totals = {}
+    if top_isk_destroyed:
+        totals["total_isk_destroyed"] = sum(r["isk_destroyed"] for r in top_isk_destroyed)
+        totals["total_isk_lost"]      = sum(r["isk_lost"] for r in top_isk_destroyed)
+        totals["total_kills"]         = sum(int(r["ships_destroyed"]) for r in top_isk_destroyed)
+        totals["total_deaths"]        = sum(int(r["ships_lost"]) for r in top_isk_destroyed)
+        total_isk = totals["total_isk_destroyed"] + totals["total_isk_lost"]
+        totals["corp_efficiency"] = round(
+            totals["total_isk_destroyed"] / total_isk * 100, 1
+        ) if total_isk else 0.0
+
+    context = {
+        "mes":               date(anio, mes, 1).strftime("%B %Y"),
+        **selector_ctx,
+        "corp_names":        corp_names,
+        "top_isk_destroyed": top_isk_destroyed,
+        "top_ships_killed":  top_ships_killed,
+        "top_efficiency":    top_efficiency,
+        "pvp_tendencia":     pvp_tendencia,
+        "totals":            totals,
+        "error_pvp":         error_pvp,
+        "is_fc":             request.user.has_perm("koru_stats.fc_access"),
+        "chart_top_isk":  _to_json({
+            "labels": [r["main_character_name"] for r in top_isk_destroyed[:10]],
+            "data":   [r["isk_destroyed"] for r in top_isk_destroyed[:10]],
+        }),
+        "chart_tendencia_pvp": _to_json({
+            "labels":          [r["period"] for r in pvp_tendencia],
+            "isk_destroyed":   [float(r["total_isk_destroyed"] or 0) for r in pvp_tendencia],
+            "isk_lost":        [float(r["total_isk_lost"] or 0) for r in pvp_tendencia],
+            "ships_destroyed": [int(r["total_ships_destroyed"] or 0) for r in pvp_tendencia],
+        }),
+    }
+    return render(request, "koru_stats/pvp_dashboard.html", context)
+

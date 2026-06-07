@@ -12,6 +12,8 @@ class General(models.Model):
             ("corp_finance_access", "Puede ver Finanzas Corp"),
             ("moon_tax_access",     "Puede ver Tax Lunas"),
             ("moon_tax_admin",      "Puede gestionar tax de lunas"),
+            ("pvp_access",          "Puede ver estadísticas PvP detalladas"),
+            ("fc_access",           "Puede ver panel FC/Director"),
         )
 
 
@@ -91,25 +93,22 @@ class MoonTaxPayment(models.Model):
 class CharacterMonthlySummary(models.Model):
     """
     Totales por personaje principal por mes.
-
-    Reemplaza los queries pesados de top_mineros, top_bounties y tendencias,
-    que hacen la cadena: miningledger → characteraudit → evecharacter →
-    characterownership → userprofile → main_evecharacter.
-
     Populated by: tasks.aggregate_monthly_summary (Celery)
     """
     main_character_id   = models.IntegerField(db_index=True)
     main_character_name = models.CharField(max_length=100)
-    corporation_id      = models.IntegerField(db_index=True, default=0,
-                                              help_text="Corp del personaje al momento de la agregación")
-    period              = models.CharField(max_length=7, db_index=True,
-                                           help_text="Formato YYYY-MM")
+    corporation_id      = models.IntegerField(db_index=True, default=0)
+    period              = models.CharField(max_length=7, db_index=True)
 
     # Minería
-    mining_units = models.BigIntegerField(default=0)
-    mining_m3    = models.DecimalField(max_digits=20, decimal_places=2, default=0)
-    mining_isk   = models.DecimalField(max_digits=20, decimal_places=2, default=0,
-                                       help_text="ISK estimado a precio de mercado")
+    mining_units             = models.BigIntegerField(default=0)
+    mining_m3                = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    mining_isk               = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                                   help_text="ISK a precio raw (market sell)")
+    mining_isk_compressed    = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                                   help_text="ISK si se vendiera comprimido")
+    mining_isk_reprocessed   = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                                   help_text="ISK si se reprocesara al 85%")
 
     # Wallet
     bounty_isk = models.DecimalField(max_digits=20, decimal_places=2, default=0)
@@ -143,11 +142,6 @@ class CharacterMonthlySummary(models.Model):
 class CharacterMonthlyOre(models.Model):
     """
     Desglose de tipos de ore por personaje principal por mes.
-
-    Reemplaza ore_breakdown_corp y SQL_ORE_BREAKDOWN_PERSONAL.
-    Tiene los mismos JOINs pesados que CharacterMonthlySummary,
-    pero aquí también se precalcula por tipo de mineral.
-
     Populated by: tasks.aggregate_monthly_ore (Celery)
     """
     main_character_id = models.IntegerField(db_index=True)
@@ -158,7 +152,12 @@ class CharacterMonthlyOre(models.Model):
     type_name = models.CharField(max_length=100)
     quantity  = models.BigIntegerField(default=0)
     m3        = models.DecimalField(max_digits=20, decimal_places=2, default=0)
-    isk       = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    isk             = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                          help_text="ISK a precio raw (market sell)")
+    isk_compressed  = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                          help_text="ISK si se vendiera comprimido")
+    isk_reprocessed = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                          help_text="ISK si se reprocesara al 85%")
 
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -177,3 +176,85 @@ class CharacterMonthlyOre(models.Model):
 
     def __str__(self):
         return f"{self.main_character_id} | {self.period} | {self.type_name}"
+
+
+# ---------------------------------------------------------------------------
+# Precios de ore — actualizados periódicamente desde Fuzzwork Market API
+# ---------------------------------------------------------------------------
+
+class OreMarketPrice(models.Model):
+    """
+    Precio de mercado de cada tipo de ore, en tres modalidades de valoración.
+    Todos los precios son ISK por unidad de ore SIN comprimir (normalizados).
+    Populated by: tasks.update_ore_prices (Celery, diario)
+    """
+    type_id   = models.IntegerField(unique=True, db_index=True)
+    type_name = models.CharField(max_length=100)
+
+    price_raw          = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    price_compressed   = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    price_reprocessed  = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Precio de ore"
+        verbose_name_plural = "Precios de ore"
+        ordering            = ["type_name"]
+
+    def __str__(self):
+        return f"{self.type_name} — raw:{self.price_raw} | comp:{self.price_compressed} | repr:{self.price_reprocessed}"
+
+
+# ---------------------------------------------------------------------------
+# PvP mensual — pre-agregado desde aastatistics_zkillmonth
+# ---------------------------------------------------------------------------
+
+class CharacterMonthlyPvp(models.Model):
+    """
+    Estadísticas PvP mensuales por personaje principal.
+    Fuente: aastatistics_zkillmonth (zKill API)
+    Populated by: tasks.aggregate_character_monthly_pvp (Celery)
+    """
+    main_character_id   = models.IntegerField(db_index=True)
+    main_character_name = models.CharField(max_length=100)
+    corporation_id      = models.IntegerField(db_index=True, default=0)
+    period              = models.CharField(max_length=7, db_index=True)
+
+    ships_destroyed = models.IntegerField(default=0)
+    ships_lost      = models.IntegerField(default=0)
+    isk_destroyed   = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    isk_lost        = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "PvP mensual por personaje"
+        verbose_name_plural = "PvP mensuales por personaje"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["main_character_id", "period"],
+                name="unique_char_monthly_pvp",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["period", "corporation_id"],  name="koru_pvp_period_corp"),
+            models.Index(fields=["period", "isk_destroyed"],   name="koru_pvp_period_isk"),
+            models.Index(fields=["period", "ships_destroyed"], name="koru_pvp_period_ships"),
+        ]
+
+    def __str__(self):
+        return f"{self.main_character_name} | {self.period} | {self.ships_destroyed}K/{self.ships_lost}D"
+
+    @property
+    def isk_efficiency(self):
+        total = self.isk_destroyed + self.isk_lost
+        if not total:
+            return 0.0
+        return float(self.isk_destroyed / total * 100)
+
+    @property
+    def kd_ratio(self):
+        if not self.ships_lost:
+            return float(self.ships_destroyed)
+        return float(self.ships_destroyed / self.ships_lost)

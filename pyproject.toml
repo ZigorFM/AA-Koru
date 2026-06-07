@@ -15,13 +15,9 @@ dependencies = [
 [project.urls]
 Repository = "https://github.com/ZigorFM/AA-Koru"
 
-[tool.setuptools]
-packages = ["koru_stats", "koru_stats.migrations", "koru_stats.templatetags"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["koru_stats*"]
 
 [tool.setuptools.package-data]
-koru_stats = [
-    "templates/**/*",
-    "static/**/*",
-    "migrations/*.py",
-    "templatetags/*.py",
-]
+koru_stats = ["templates/**/*", "static/**/*"]

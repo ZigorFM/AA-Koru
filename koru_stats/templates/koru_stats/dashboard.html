@@ -147,9 +147,11 @@
                 <div class="d-flex align-items-center mb-2 gap-2">
                   <h6 class="text-muted mb-0"><i class="fas fa-trophy me-1"></i>Top Mineros</h6>
                   <div class="btn-group btn-group-sm ms-auto" id="toggleMineros">
-                    <button class="btn btn-info active" data-mmode="isk">ISK 85%</button>
-                    <button class="btn btn-outline-info" data-mmode="isk_comp">Comprimido</button>
-                    <button class="btn btn-outline-info" data-mmode="isk_repr">Reprocesado</button>
+                    <button class="btn btn-outline-warning" data-mmode="unidades">U</button>
+                    <button class="btn btn-outline-warning" data-mmode="m3">m³</button>
+                    <button class="btn btn-outline-info" data-mmode="isk">Bruto</button>
+                    <button class="btn btn-outline-info" data-mmode="isk_comp">Comp.</button>
+                    <button class="btn btn-warning active" data-mmode="isk_repr">85%</button>
                   </div>
                 </div>
                 {% if error_mineros %}<div class="alert alert-warning py-2">Error al cargar.</div>
@@ -169,7 +171,7 @@
                     <tr>
                       <td>{% if forloop.counter == 1 %}<i class="fas fa-trophy medal-1"></i>{% elif forloop.counter == 2 %}<i class="fas fa-trophy medal-2"></i>{% elif forloop.counter == 3 %}<i class="fas fa-trophy medal-3"></i>{% else %}<span class="text-muted small">{{ forloop.counter }}</span>{% endif %}</td>
                       <td><img src="https://images.evetech.net/characters/{{ r.char_id }}/portrait?size=32" class="portrait me-2" alt="" onerror="this.src='https://images.evetech.net/characters/0/portrait?size=32'">{{ r.nombre }}</td>
-                      <td class="text-end fw-bold" style="color:#06b6d4" data-isk="{{ r.total_isk }}" data-isk-comp="{{ r.total_isk_compressed|default:0 }}" data-isk-repr="{{ r.total_isk_reprocessed|default:0 }}">{{ r.total_isk|rkisk }}</td>
+                      <td class="text-end fw-bold ore-val" style="color:#06b6d4" data-unidades="{{ r.total_unidades|default:0 }}" data-m3="{{ r.total_m3|default:0 }}" data-isk="{{ r.total_isk }}" data-isk-comp="{{ r.total_isk_compressed|default:0 }}" data-isk-repr="{{ r.total_isk_reprocessed|default:0 }}">{{ r.total_isk_reprocessed|rkisk }}</td>
                       <td class="text-end small">
                         {% if r.delta > 0 %}<span class="vs-up"><i class="fas fa-arrow-up"></i> {{ r.delta_pct }}%</span>
                         {% elif r.delta < 0 %}<span class="vs-down"><i class="fas fa-arrow-down"></i> {{ r.delta_pct|slice:"1:" }}%</span>
@@ -340,9 +342,11 @@
         if (chartMin) chartMin.destroy();
         modeMin = mode;
         const map = {
-            isk:      { data: dataMineros.isk,      label:'ISK 85%',   color:'#06b6d4' },
-            isk_comp: { data: dataMineros.isk_comp,  label:'ISK Compr.', color:'#8b5cf6' },
-            isk_repr: { data: dataMineros.isk_repr,  label:'ISK Repr.',  color:'#10b981' },
+            unidades: { data: dataMineros.unidades, label:'Unidades',   color:'#f59e0b' },
+            m3:       { data: dataMineros.m3,       label:'Volumen m³', color:'#f59e0b' },
+            isk:      { data: dataMineros.isk,      label:'ISK Bruto',  color:'#06b6d4' },
+            isk_comp: { data: dataMineros.isk_comp,  label:'ISK Comp.',  color:'#8b5cf6' },
+            isk_repr: { data: dataMineros.isk_repr,  label:'ISK 85%',   color:'#f59e0b' },
         };
         const m = map[mode];
         chartMin = new Chart(ctxMin, {
@@ -352,26 +356,33 @@
         });
     }
     if (ctxMin && dataMineros.labels.length) {
-        buildMin('isk');
+        buildMin('isk_repr');
         // Cambiar header al hacer click (reutiliza lógica original)
-        const modeLabelsMin = { isk:'ISK 85%', isk_comp:'ISK Compr.', isk_repr:'ISK Repr.' };
+        const modeLabelsMin = { unidades:'Unidades', m3:'Volumen m³', isk:'ISK Bruto', isk_comp:'ISK Comp.', isk_repr:'ISK 85%' };
+        const modeCssMin    = { unidades:'warning', m3:'warning', isk:'info', isk_comp:'info', isk_repr:'warning' };
+        function fmtMin(mode, val) {
+            if (mode === 'unidades') return parseInt(val).toLocaleString();
+            if (mode === 'm3') { const v = parseFloat(val); return v >= 1e6 ? (v/1e6).toFixed(1)+'M m³' : v.toFixed(0)+' m³'; }
+            const v = parseFloat(val);
+            return v >= 1e9 ? (v/1e9).toFixed(2)+'B' : v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v.toFixed(0);
+        }
+        const dataKeyMin = { unidades:'unidades', m3:'m3', isk:'isk', isk_comp:'iskComp', isk_repr:'iskRepr' };
         function applyModeMin(mode) {
             buildMin(mode);
             document.getElementById('headerMineros').textContent = modeLabelsMin[mode];
-            // Update table cells
-            document.querySelectorAll('td[data-isk]').forEach(td => {
-                const val = parseFloat(td.dataset[mode === 'isk' ? 'isk' : mode === 'isk_comp' ? 'iskComp' : 'iskRepr'] || 0);
-                td.textContent = val >= 1e9 ? (val/1e9).toFixed(2)+'B' : val >= 1e6 ? (val/1e6).toFixed(1)+'M' : val.toFixed(0);
+            document.querySelectorAll('td.ore-val').forEach(td => {
+                td.textContent = fmtMin(mode, td.dataset[dataKeyMin[mode]] || 0);
             });
             document.querySelectorAll('#toggleMineros button').forEach(b => {
-                const active = b.dataset.mmode === mode;
-                b.className = active ? 'btn btn-info active' : 'btn btn-outline-info';
+                const c = modeCssMin[b.dataset.mmode];
+                b.className = b.dataset.mmode === mode ? `btn btn-${c} active` : `btn btn-outline-${c}`;
             });
         }
         document.getElementById('toggleMineros').addEventListener('click', e => {
             const btn = e.target.closest('button[data-mmode]');
             if (btn) applyModeMin(btn.dataset.mmode);
         });
+        applyModeMin('isk_repr');
     }
 
     // ── Ore chart ──

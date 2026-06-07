@@ -7,9 +7,10 @@ from datetime import date, datetime
 from django.contrib.auth.decorators import permission_required
 from django.core.cache import cache
 from django.db import connection
+from django.db.models import F, Sum
 from django.shortcuts import render
 
-from .models import TrackedCorporation
+from .models import CharacterMonthlyOre, CharacterMonthlySummary, TrackedCorporation
 
 logger = logging.getLogger(__name__)
 
@@ -87,17 +88,15 @@ def _get_periodos_con_datos(tipo="general"):
                     ORDER BY periodo DESC
                 """)
             else:
-                cursor.execute("""
-                    SELECT DISTINCT periodo FROM (
-                        SELECT DATE_FORMAT(date, '%Y-%m') AS periodo
-                        FROM corptools_characterminingledger
-                        UNION
-                        SELECT DATE_FORMAT(date, '%Y-%m') AS periodo
-                        FROM corptools_characterwalletjournalentry
-                        WHERE ref_type IN ('bounty_prizes', 'ess_escrow_transfer')
-                    ) t
-                    ORDER BY periodo DESC
-                """)
+                # Consulta rápida sobre tabla pre-agregada (índice simple vs scan corptools)
+                rows = list(
+                    CharacterMonthlySummary.objects
+                    .values_list("period", flat=True)
+                    .distinct()
+                    .order_by("-period")
+                )
+                cache.set(cache_key, _build_periodos_list(rows), timeout=600)
+                return cache.get(cache_key)
             rows = [row[0] for row in cursor.fetchall()]
     except Exception:
         rows = []
@@ -117,6 +116,19 @@ def _get_periodos_con_datos(tipo="general"):
             continue
 
     cache.set(cache_key, periodos, timeout=600)  # 10 minutos
+    return periodos
+
+
+def _build_periodos_list(valores):
+    """Convierte lista de strings 'YYYY-MM' en la estructura que usa _build_selector_context."""
+    periodos = []
+    for valor in valores:
+        try:
+            anio = int(valor[:4])
+            mes  = int(valor[5:7])
+            periodos.append({"valor": valor, "label": date(anio, mes, 1).strftime("%B"), "anio": anio, "mes": mes})
+        except (ValueError, IndexError):
+            continue
     return periodos
 
 
@@ -199,7 +211,82 @@ def _corp_filter_sql(inicio, fin):
 
 
 # ---------------------------------------------------------------------------
+# Helpers ORM — leen de tablas pre-agregadas (sin JOINs pesados)
+# ---------------------------------------------------------------------------
+
+def _summary_top_mineros(corp_ids, period, limit=10):
+    """Top mineros del período desde CharacterMonthlySummary."""
+    qs = (CharacterMonthlySummary.objects
+          .filter(period=period, corporation_id__in=corp_ids)
+          .order_by("-mining_isk")[:limit])
+    return [
+        {
+            "nombre":         r.main_character_name,
+            "char_id":        r.main_character_id,
+            "total_unidades": int(r.mining_units),
+            "total_m3":       float(r.mining_m3),
+            "total_isk":      float(r.mining_isk),
+        }
+        for r in qs
+    ]
+
+
+def _summary_top_bounties(corp_ids, period, limit=10):
+    """Top bounties (bounty + ESS) del período desde CharacterMonthlySummary."""
+    qs = (CharacterMonthlySummary.objects
+          .filter(period=period, corporation_id__in=corp_ids)
+          .annotate(total_isk=F("bounty_isk") + F("ess_isk"))
+          .order_by("-total_isk")[:limit])
+    return [
+        {
+            "nombre":    r.main_character_name,
+            "char_id":   r.main_character_id,
+            "total_isk": float(r.total_isk),
+        }
+        for r in qs
+    ]
+
+
+def _summary_ore_breakdown_corp(corp_ids, period):
+    """Desglose de ore de la corp desde CharacterMonthlyOre."""
+    rows = (CharacterMonthlyOre.objects
+            .filter(period=period, corporation_id__in=corp_ids)
+            .values("type_name")
+            .annotate(
+                unidades=Sum("quantity"),
+                m3_total=Sum("m3"),
+                isk_estimado=Sum("isk"),
+            )
+            .order_by("-m3_total"))
+    return [dict(r) for r in rows]
+
+
+def _summary_tendencias_mineria(corp_ids, n_months=6):
+    """Tendencias de minería de los últimos N meses desde CharacterMonthlySummary."""
+    hoy = datetime.now()
+    periods = []
+    for i in range(n_months):
+        mes  = hoy.month - i
+        anio = hoy.year
+        if mes <= 0:
+            mes  += 12
+            anio -= 1
+        periods.append(f"{anio}-{mes:02d}")
+
+    rows = (CharacterMonthlySummary.objects
+            .filter(period__in=periods, corporation_id__in=corp_ids)
+            .values("period")
+            .annotate(
+                unidades=Sum("mining_units"),
+                isk_mineria=Sum("mining_isk"),
+            )
+            .order_by("period"))
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
 # SQL base — el filtro de corp se inyecta dinámicamente
+# (se mantienen para corp_dashboard y vistas que no tienen tablas resumen)
 # ---------------------------------------------------------------------------
 
 def _build_top_mineros(corp_ids, inicio, fin):
@@ -353,50 +440,33 @@ def dashboard(request):
     corp_names = list(TrackedCorporation.objects.filter(is_active=True).values_list("corporation_name", flat=True))
 
     # Mes anterior para comparativa
-    inicio_ant, fin_ant = _mes_anterior(anio, mes)
+    if mes == 1:
+        period_ant = f"{anio - 1}-12"
+    else:
+        period_ant = f"{anio}-{mes - 1:02d}"
 
     top_mineros, top_bounties, ore_breakdown = [], [], []
     top_mineros_ant, top_bounties_ant = [], []
     error_mineros = error_bounties = error_ore = False
 
+    # ── Top mineros y bounties — ORM sobre CharacterMonthlySummary (sin JOINs) ──
     try:
-        sql, params = _build_top_mineros(corp_ids, inicio, fin)
-        with connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            top_mineros = _fetchall(cursor)
+        top_mineros     = _summary_top_mineros(corp_ids, periodo_sel)
+        top_mineros_ant = _summary_top_mineros(corp_ids, period_ant)
     except Exception as e:
         logger.error("koru_stats top_mineros: %s", e)
-    try:
-        sql, params = _build_top_mineros(corp_ids, inicio_ant, fin_ant)
-        with connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            top_mineros_ant = _fetchall(cursor)
-    except Exception as e:
-        logger.error("koru_stats top_mineros_ant: %s", e)
         error_mineros = True
 
     try:
-        sql, params = _build_top_bounties(corp_ids, inicio, fin)
-        with connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            top_bounties = _fetchall(cursor)
+        top_bounties     = _summary_top_bounties(corp_ids, periodo_sel)
+        top_bounties_ant = _summary_top_bounties(corp_ids, period_ant)
     except Exception as e:
         logger.error("koru_stats top_bounties: %s", e)
-
-    try:
-        sql, params = _build_top_bounties(corp_ids, inicio_ant, fin_ant)
-        with connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            top_bounties_ant = _fetchall(cursor)
-    except Exception as e:
-        logger.error("koru_stats top_bounties_ant: %s", e)
         error_bounties = True
 
+    # ── Ore breakdown — ORM sobre CharacterMonthlyOre ──
     try:
-        sql, params = _build_ore_breakdown_corp(corp_ids, inicio, fin)
-        with connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            ore_breakdown = _fetchall(cursor)
+        ore_breakdown = _summary_ore_breakdown_corp(corp_ids, periodo_sel)
     except Exception as e:
         logger.error("koru_stats ore_breakdown: %s", e)
         error_ore = True
@@ -405,19 +475,13 @@ def dashboard(request):
     total_isk_ore = sum(float(r["isk_estimado"] or 0) for r in ore_breakdown)
     top_ore_chart = sorted(ore_breakdown, key=lambda r: float(r["isk_estimado"] or 0), reverse=True)[:8]
 
-    # Agrupar periodos por año para el selector
-
-    # Tendencias históricas — últimos 6 meses
-    tendencias_mineria  = []
+    # ── Tendencias — minería desde CharacterMonthlySummary, bounties desde corp wallet ──
     tendencias_bounties = []
     try:
-        placeholders = ",".join(["%s"] * len(corp_ids))
-        sql_min = SQL_TENDENCIAS_MINERIA.format(placeholders=placeholders)
-        with connection.cursor() as cursor:
-            cursor.execute(sql_min, corp_ids)
-            tendencias_mineria = _fetchall(cursor)
+        tendencias_mineria = _summary_tendencias_mineria(corp_ids)
     except Exception as e:
         logger.error("koru_stats tendencias_mineria: %s", e)
+        tendencias_mineria = []
 
     try:
         with connection.cursor() as cursor:
@@ -428,12 +492,12 @@ def dashboard(request):
 
     # Combinar períodos para la gráfica
     periodos_tend = sorted(set(
-        [r["periodo"] for r in tendencias_mineria] +
+        [r["period"] for r in tendencias_mineria] +
         [r["periodo"] for r in tendencias_bounties]
     ))
-    min_by_period  = {r["periodo"]: float(r["isk_mineria"] or 0)  for r in tendencias_mineria}
-    bou_by_period  = {r["periodo"]: float(r["isk_bounties"] or 0) for r in tendencias_bounties}
-    uni_by_period  = {r["periodo"]: int(r["unidades"] or 0)       for r in tendencias_mineria}
+    min_by_period  = {r["period"]:   float(r["isk_mineria"] or 0)  for r in tendencias_mineria}
+    bou_by_period  = {r["periodo"]:  float(r["isk_bounties"] or 0) for r in tendencias_bounties}
+    uni_by_period  = {r["period"]:   int(r["unidades"] or 0)       for r in tendencias_mineria}
 
     context = {
         "mes":               date(anio, mes, 1).strftime("%B %Y"),
@@ -499,9 +563,19 @@ def mi_dashboard(request):
         error_bounties = True
 
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(SQL_ORE_BREAKDOWN_PERSONAL, [main.id, inicio, fin])
-            ore_breakdown = _fetchall(cursor)
+        # ORM sobre CharacterMonthlyOre — sin JOINs
+        ore_rows = (CharacterMonthlyOre.objects
+                    .filter(main_character_id=main.id, period=periodo_sel)
+                    .order_by("-m3"))
+        ore_breakdown = [
+            {
+                "ore":          r.type_name,
+                "unidades":     int(r.quantity),
+                "m3_total":     float(r.m3),
+                "isk_estimado": float(r.isk),
+            }
+            for r in ore_rows
+        ]
     except Exception as e:
         logger.error("koru_stats ore_breakdown personal: %s", e)
         error_ore = True

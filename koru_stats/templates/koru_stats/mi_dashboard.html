@@ -87,17 +87,20 @@
                     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabIngresos" type="button">
                         <i class="fas fa-arrow-up me-1 text-success"></i>Ingresos
                         {% if total_ingresos_p %}<span class="badge bg-success ms-1">{{ total_ingresos_p|rkisk }}</span>{% endif %}
+                        <span id="deltaIngP" class="small ms-1"></span>
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabGastos" type="button">
                         <i class="fas fa-arrow-down me-1 text-danger"></i>Gastos
                         {% if total_gastos_p %}<span class="badge bg-danger ms-1">{{ total_gastos_p|rkisk }}</span>{% endif %}
+                        <span id="deltaGasP" class="small ms-1"></span>
                     </button>
                 </li>
                 <li class="ms-auto d-flex align-items-center px-3">
                     <span class="small text-muted me-2">Balance del mes:</span>
                     <span class="fw-bold" id="balancePersonalBadge">—</span>
+                    <span id="deltaBalP" class="small ms-2"></span>
                 </li>
             </ul>
         </div>
@@ -127,6 +130,7 @@
                     </div>
                     <div class="stat-big text-warning" id="kpiIskOre">—</div>
                     <small class="text-muted" id="kpiIskOreLabel">ISK repr. 85%</small>
+                    <span id="deltaKpiOre" class="small"></span>
                 </div>
             </div>
         </div>
@@ -153,6 +157,7 @@
                 <div class="card-body">
                     <div class="stat-label mb-1">Total bounties</div>
                     <div class="stat-big text-success" id="kpiBountiesTotal">—</div>
+                    <span id="deltaKpiBou" class="small"></span>
                     <small class="text-muted">directos + ESS</small>
                 </div>
             </div>
@@ -163,6 +168,7 @@
                     <div class="stat-label mb-1">Total generado</div>
                     <div class="stat-big text-success" id="kpiTotal">—</div>
                     <small class="text-muted">minería + bounties</small>
+                    <span id="deltaKpiTotal" class="small"></span>
                 </div>
             </div>
         </div>
@@ -489,6 +495,23 @@
     const essPagos         = parseFloat("{{ bounties_desglose.ess_pagos|floatformat:2 }}".replace(",",".")) || 0;
     const totalBounties    = parseFloat("{{ bounties_desglose.total|floatformat:2 }}".replace(",",".")) || 0;
 
+    // ── Mes anterior ──
+    const totalIngPAnt  = parseFloat("{{ total_ing_p_ant|floatformat:2 }}".replace(",","."))  || 0;
+    const totalGasPAnt  = parseFloat("{{ total_gas_p_ant|floatformat:2 }}".replace(",","."))  || 0;
+    const balancePAnt   = parseFloat("{{ balance_p_ant|floatformat:2 }}".replace(",","."))    || 0;
+    const oreReprAnt    = parseFloat("{{ mining_isk_ore_repr_ant|floatformat:2 }}".replace(",",".")) || 0;
+    const oreCompAnt    = parseFloat("{{ mining_isk_ore_comp_ant|floatformat:2 }}".replace(",",".")) || 0;
+    const oreRawAnt     = parseFloat("{{ mining_isk_ore_raw_ant|floatformat:2 }}".replace(",","."))  || 0;
+    const bountiesAnt   = parseFloat("{{ total_bounties_ant|floatformat:2 }}".replace(",","."))     || 0;
+
+    function fmtDelta(current, previous, invertColors=false) {
+        if (!previous) return '';
+        const pct = ((current - previous) / Math.abs(previous)) * 100;
+        const up  = pct >= 0;
+        const goodColor = invertColors ? (up ? '#ef4444' : '#10b981') : (up ? '#10b981' : '#ef4444');
+        return `<span style="color:${goodColor}">${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%</span>`;
+    }
+
     const oreVals  = { raw: totalIskOre, comp: totalIskOreComp, repr: totalIskOreRepr };
     const oreLabels = { raw: 'ISK bruto', comp: 'ISK comprimido', repr: 'ISK repr. 85%' };
     let currentOreVal = totalIskOreRepr;
@@ -499,6 +522,17 @@
     if (el('kpiEss'))         el('kpiEss').textContent         = fmtISK(essPagos);
     if (el('kpiBountiesTotal')) el('kpiBountiesTotal').textContent = fmtISK(totalBounties);
     if (el('kpiTotal'))       el('kpiTotal').textContent       = fmtISK(totalIskOreRepr + totalBounties);
+
+    // ── Deltas vs mes anterior ──
+    const totalIngP = parseFloat("{{ total_ingresos_p|floatformat:2 }}".replace(",",".")) || 0;
+    const totalGasP = parseFloat("{{ total_gastos_p|floatformat:2 }}".replace(",","."))   || 0;
+    const balanceP  = parseFloat("{{ balance_personal|floatformat:2 }}".replace(",",".")) || 0;
+    if (el('deltaIngP'))     el('deltaIngP').innerHTML     = fmtDelta(totalIngP, totalIngPAnt);
+    if (el('deltaGasP'))     el('deltaGasP').innerHTML     = fmtDelta(totalGasP, totalGasPAnt, true);
+    if (el('deltaBalP'))     el('deltaBalP').innerHTML     = fmtDelta(balanceP, balancePAnt);
+    if (el('deltaKpiOre'))   el('deltaKpiOre').innerHTML   = fmtDelta(totalIskOreRepr, oreReprAnt);
+    if (el('deltaKpiBou'))   el('deltaKpiBou').innerHTML   = fmtDelta(totalBounties, bountiesAnt);
+    if (el('deltaKpiTotal')) el('deltaKpiTotal').innerHTML = fmtDelta(totalIskOreRepr + totalBounties, oreReprAnt + bountiesAnt);
 
     document.querySelectorAll('.ore-kpi-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -513,6 +547,9 @@
             if (el('kpiIskOre'))      el('kpiIskOre').textContent      = fmtISK(currentOreVal);
             if (el('kpiIskOreLabel')) el('kpiIskOreLabel').textContent  = oreLabels[val];
             if (el('kpiTotal'))       el('kpiTotal').textContent        = fmtISK(currentOreVal + totalBounties);
+            const oreAntMap = {raw: oreRawAnt, comp: oreCompAnt, repr: oreReprAnt};
+            if (el('deltaKpiOre'))   el('deltaKpiOre').innerHTML   = fmtDelta(currentOreVal, oreAntMap[val] || oreReprAnt);
+            if (el('deltaKpiTotal')) el('deltaKpiTotal').innerHTML = fmtDelta(currentOreVal + totalBounties, (oreAntMap[val] || oreReprAnt) + bountiesAnt);
         });
     });
 

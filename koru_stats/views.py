@@ -782,9 +782,33 @@ def mi_dashboard(request):
             else:
                 r["delta"] = None
 
+        total_ing_p_ant  = sum(r["total"] for r in ing_ant)
+        total_gas_p_ant  = sum(r["total"] for r in gas_ant)
+        balance_p_ant    = round(total_ing_p_ant - total_gas_p_ant, 2)
+
     except Exception as e:
         logger.error("koru_stats wallet personal: %s", e)
         error_wallet_personal = True
+        total_ing_p_ant = total_gas_p_ant = balance_p_ant = 0
+    # ── Mes anterior: minería + bounties desde CharacterMonthlySummary ──
+    anio_ant, mes_ant = (anio, mes - 1) if mes > 1 else (anio - 1, 12)
+    periodo_ant = f"{anio_ant}-{mes_ant:02d}"
+    try:
+        summary_ant = CharacterMonthlySummary.objects.filter(
+            main_character_id=main.character_id, period=periodo_ant
+        ).first()
+        mining_isk_ore_repr_ant = float(summary_ant.mining_isk_reprocessed) if summary_ant else 0
+        mining_isk_ore_comp_ant = float(summary_ant.mining_isk_compressed)  if summary_ant else 0
+        mining_isk_ore_raw_ant  = float(summary_ant.mining_isk)             if summary_ant else 0
+        total_bounties_ant      = float((summary_ant.bounty_isk or 0) + (summary_ant.ess_isk or 0)) if summary_ant else 0
+    except Exception as e:
+        logger.error("koru_stats summary_ant personal: %s", e)
+        mining_isk_ore_repr_ant = mining_isk_ore_comp_ant = mining_isk_ore_raw_ant = total_bounties_ant = 0
+
+    # ensure wallet-ant totals exist even if wallet block errored
+    if "total_ing_p_ant" not in dir():
+        total_ing_p_ant = total_gas_p_ant = balance_p_ant = 0
+
     total_minado   = sum(int(r["total_unidades"]) for r in mining_personal)
     total_bounties = sum(float(Decimal(str(r["total_isk"]))) for r in bounties_diarios)
     total_m3       = sum(float(r["m3_total"] or 0) for r in ore_breakdown)
@@ -832,6 +856,13 @@ def mi_dashboard(request):
         "total_gastos_p":        total_gas_p,
         "balance_personal":      balance_personal,
         "balance_personal_json": json.dumps(float(balance_personal)),
+        "total_ing_p_ant":        total_ing_p_ant,
+        "total_gas_p_ant":        total_gas_p_ant,
+        "balance_p_ant":          balance_p_ant,
+        "mining_isk_ore_repr_ant": mining_isk_ore_repr_ant,
+        "mining_isk_ore_comp_ant": mining_isk_ore_comp_ant,
+        "mining_isk_ore_raw_ant":  mining_isk_ore_raw_ant,
+        "total_bounties_ant":      total_bounties_ant,
         "error_wallet_personal": error_wallet_personal,
         "chart_ingresos_p":      _to_json({"labels": [r["cat"] for r in ingresos_donut], "data": [r["total"] for r in ingresos_donut]}),
         "chart_gastos_p":        _to_json({"labels": [r["cat"] for r in gastos_donut],   "data": [r["total"] for r in gastos_donut]}),

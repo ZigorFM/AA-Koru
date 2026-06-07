@@ -233,15 +233,16 @@ def _summary_top_mineros(corp_ids, period, limit=10):
 
 def _summary_top_bounties(corp_ids, period, limit=10):
     """Top bounties (bounty + ESS) del período desde CharacterMonthlySummary."""
+    # Usamos combined_isk para evitar conflicto con @property total_isk del modelo
     qs = (CharacterMonthlySummary.objects
           .filter(period=period, corporation_id__in=corp_ids)
-          .annotate(total_isk=F("bounty_isk") + F("ess_isk"))
-          .order_by("-total_isk")[:limit])
+          .annotate(combined_isk=F("bounty_isk") + F("ess_isk"))
+          .order_by("-combined_isk")[:limit])
     return [
         {
             "nombre":    r.main_character_name,
             "char_id":   r.main_character_id,
-            "total_isk": float(r.total_isk),
+            "total_isk": float(r.combined_isk),
         }
         for r in qs
     ]
@@ -258,7 +259,16 @@ def _summary_ore_breakdown_corp(corp_ids, period):
                 isk_estimado=Sum("isk"),
             )
             .order_by("-m3_total"))
-    return [dict(r) for r in rows]
+    # Renombrar type_name → ore para compatibilidad con el template
+    return [
+        {
+            "ore":          r["type_name"],
+            "unidades":     r["unidades"],
+            "m3_total":     float(r["m3_total"] or 0),
+            "isk_estimado": float(r["isk_estimado"] or 0),
+        }
+        for r in rows
+    ]
 
 
 def _summary_tendencias_mineria(corp_ids, n_months=6):
@@ -1823,6 +1833,7 @@ def _categorize_wallet(rows, categories, only_income=True):
             })
             used.update(ref_types)
 
+    # Otros — ref_types no categorizados
     # Otros — ref_types no categorizados
     otros = sum(v for k, v in by_type.items() if k not in used)
     if otros > 0:

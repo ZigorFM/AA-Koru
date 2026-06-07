@@ -352,6 +352,9 @@ def _summary_pvp_tendencias(corp_ids, n_months=6):
                 total_ships_lost=Sum("ships_lost"),
                 total_isk_destroyed=Sum("isk_destroyed"),
                 total_isk_lost=Sum("isk_lost"),
+                total_participations=Sum("participations"),
+                total_solo_kills=Sum("solo_kills"),
+                total_final_blows=Sum("final_blows"),
             )
             .order_by("period"))
     return [dict(r) for r in rows]

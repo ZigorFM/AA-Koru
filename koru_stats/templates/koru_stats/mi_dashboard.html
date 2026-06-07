@@ -494,7 +494,7 @@
 
         {# 3 bloques principales #}
         <div class="row g-3 mb-4">
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
                 <div class="card h-100 text-center" style="border-top:4px solid #10b981">
                     <div class="card-body py-4">
                         <div class="display-4 text-success fw-bold mb-1">{{ pvp_personal.ships_destroyed }}</div>
@@ -509,31 +509,46 @@
                     </div>
                 </div>
             </div>
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
                 <div class="card h-100 text-center" style="border-top:4px solid #ef4444">
                     <div class="card-body py-4">
                         <div class="display-4 text-danger fw-bold mb-1">{{ pvp_personal.ships_lost }}</div>
                         <div class="fw-semibold mb-1">Losses</div>
                         <div class="small text-muted">{{ pvp_personal.isk_lost|rkisk }} ISK</div>
                         <hr class="my-2">
-                        <div class="small text-muted" id="pvpEffPct">ISK Efficiency calculando…</div>
-                        <div class="mt-1">
-                            <div class="progress" style="height:6px">
-                                <div class="progress-bar" id="pvpEffBar" role="progressbar" style="width:0%"></div>
-                            </div>
+                        {% with eff=pvp_personal.isk_efficiency|floatformat:1 %}
+                        <div class="small fw-bold {% if pvp_personal.isk_efficiency >= 50 %}text-success{% else %}text-danger{% endif %}">ISK Eff. {{ eff }}%</div>
+                        <div class="mt-1 progress" style="height:6px">
+                            <div class="progress-bar {% if pvp_personal.isk_efficiency >= 60 %}bg-success{% elif pvp_personal.isk_efficiency >= 40 %}bg-warning{% else %}bg-danger{% endif %}"
+                                 role="progressbar" style="width:{{ pvp_personal.isk_efficiency|floatformat:0 }}%"></div>
                         </div>
+                        {% endwith %}
                     </div>
                 </div>
             </div>
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
                 <div class="card h-100 text-center" style="border-top:4px solid #f97316">
                     <div class="card-body py-4">
                         <div class="display-4 text-warning fw-bold mb-1">{{ pvp_personal.final_blows }}</div>
                         <div class="fw-semibold mb-1">Killmarks</div>
                         <div class="small text-muted">tiros de gracia</div>
                         <hr class="my-2">
-                        <div class="small text-muted">Daño infligido</div>
-                        <div class="fw-bold text-warning small">{{ pvp_personal.damage_dealt|rkisk }}</div>
+                        <div class="small text-muted">Participaciones</div>
+                        <div class="fw-bold small" style="color:#8b5cf6">{{ pvp_personal.participations }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="card h-100 text-center" style="border-top:4px solid #f59e0b">
+                    <div class="card-body py-4">
+                        <div class="display-5 text-warning fw-bold mb-1">{{ pvp_personal.damage_dealt|rkisk }}</div>
+                        <div class="fw-semibold mb-1">Daño Infligido</div>
+                        <div class="small text-muted">daño total en {{ pvp_personal.participations }} kills</div>
+                        <hr class="my-2">
+                        <div class="row text-center g-0 small">
+                            <div class="col"><div class="fw-bold text-info">{{ pvp_personal.top_damage_kills }}</div><div class="text-muted">Top dmg</div></div>
+                            <div class="col"><div class="fw-bold" style="color:#06b6d4">{{ pvp_personal.solo_kills }}</div><div class="text-muted">Solo</div></div>
+                        </div>
                     </div>
                 </div>
             </div>

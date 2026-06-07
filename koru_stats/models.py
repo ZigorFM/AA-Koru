@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 
 class General(models.Model):
@@ -81,3 +82,88 @@ class MoonTaxPayment(models.Model):
     def __str__(self):
         estado = "✅ PAGADO" if self.is_paid else "⏳ PENDIENTE"
         return f"{self.character_name} | {self.period} | {self.isk_owed} ISK | {estado}"
+
+
+# ---------------------------------------------------------------------------
+# Tablas resumen — pre-agregadas por Celery, consultadas por las vistas
+# ---------------------------------------------------------------------------
+
+class CharacterMonthlySummary(models.Model):
+    """
+    Totales por personaje principal por mes.
+
+    Reemplaza los queries pesados de top_mineros, top_bounties y tendencias,
+    que hacen la cadena: miningledger → characteraudit → evecharacter →
+    characterownership → userprofile → main_evecharacter.
+
+    Populated by: tasks.aggregate_monthly_summary (Celery)
+    """
+    main_character_id   = models.IntegerField(db_index=True)
+    main_character_name = models.CharField(max_length=100)
+    corporation_id      = models.IntegerField(db_index=True, default=0,
+                                              help_text="Corp del personaje al momento de la agregación")
+    period              = models.CharField(max_length=7, db_index=True,
+                                           help_text="Formato YYYY-MM")
+
+    # Minería
+    mining_units = models.BigIntegerField(default=0)
+    mining_m3    = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    mining_isk   = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                       help_text="ISK estimado a precio de mercado")
+
+    # Wallet
+    bounty_isk = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    ess_isk    = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together     = ("main_character_id", "period")
+        verbose_name        = "Resumen mensual por personaje"
+        verbose_name_plural = "Resúmenes mensuales por personaje"
+        indexes = [
+            models.Index(fields=["period", "corporation_id"]),
+            models.Index(fields=["period", "mining_isk"]),
+            models.Index(fields=["period", "bounty_isk"]),
+        ]
+
+    def __str__(self):
+        return f"{self.main_character_name} | {self.period}"
+
+    @property
+    def total_isk(self):
+        return self.mining_isk + self.bounty_isk + self.ess_isk
+
+
+class CharacterMonthlyOre(models.Model):
+    """
+    Desglose de tipos de ore por personaje principal por mes.
+
+    Reemplaza ore_breakdown_corp y SQL_ORE_BREAKDOWN_PERSONAL.
+    Tiene los mismos JOINs pesados que CharacterMonthlySummary,
+    pero aquí también se precalcula por tipo de mineral.
+
+    Populated by: tasks.aggregate_monthly_ore (Celery)
+    """
+    main_character_id = models.IntegerField(db_index=True)
+    corporation_id    = models.IntegerField(db_index=True, default=0)
+    period            = models.CharField(max_length=7, db_index=True)
+
+    type_id   = models.IntegerField()
+    type_name = models.CharField(max_length=100)
+    quantity  = models.BigIntegerField(default=0)
+    m3        = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    isk       = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together     = ("main_character_id", "period", "type_id")
+        verbose_name        = "Ore mensual por personaje"
+        verbose_name_plural = "Ore mensuales por personaje"
+        indexes = [
+            models.Index(fields=["period", "corporation_id", "type_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.main_character_id} | {self.period} | {self.type_name}"

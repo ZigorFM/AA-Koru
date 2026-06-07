@@ -144,7 +144,14 @@
           <div class="tab-pane fade show active" id="tabMining" role="tabpanel">
             <div class="row g-3">
               <div class="col-12 col-xl-6">
-                <h6 class="text-muted mb-2"><i class="fas fa-trophy me-1"></i>Top Mineros</h6>
+                <div class="d-flex align-items-center mb-2 gap-2">
+                  <h6 class="text-muted mb-0"><i class="fas fa-trophy me-1"></i>Top Mineros</h6>
+                  <div class="btn-group btn-group-sm ms-auto" id="toggleMineros">
+                    <button class="btn btn-info active" data-mmode="isk">ISK 85%</button>
+                    <button class="btn btn-outline-info" data-mmode="isk_comp">Comprimido</button>
+                    <button class="btn btn-outline-info" data-mmode="isk_repr">Reprocesado</button>
+                  </div>
+                </div>
                 {% if error_mineros %}<div class="alert alert-warning py-2">Error al cargar.</div>
                 {% elif not top_mineros %}<p class="text-muted">Sin datos de minería para este período.</p>
                 {% else %}
@@ -347,12 +354,23 @@
     if (ctxMin && dataMineros.labels.length) {
         buildMin('isk');
         // Cambiar header al hacer click (reutiliza lógica original)
-        document.getElementById('headerMineros').addEventListener('click', () => {
-            const modes = ['isk','isk_comp','isk_repr'];
-            const labels = ['ISK 85%','ISK Comp.','ISK Repr.'];
-            const next = (modes.indexOf(modeMin) + 1) % modes.length;
-            document.getElementById('headerMineros').textContent = labels[next];
-            buildMin(modes[next]);
+        const modeLabelsMin = { isk:'ISK 85%', isk_comp:'ISK Compr.', isk_repr:'ISK Repr.' };
+        function applyModeMin(mode) {
+            buildMin(mode);
+            document.getElementById('headerMineros').textContent = modeLabelsMin[mode];
+            // Update table cells
+            document.querySelectorAll('td[data-isk]').forEach(td => {
+                const val = parseFloat(td.dataset[mode === 'isk' ? 'isk' : mode === 'isk_comp' ? 'iskComp' : 'iskRepr'] || 0);
+                td.textContent = val >= 1e9 ? (val/1e9).toFixed(2)+'B' : val >= 1e6 ? (val/1e6).toFixed(1)+'M' : val.toFixed(0);
+            });
+            document.querySelectorAll('#toggleMineros button').forEach(b => {
+                const active = b.dataset.mmode === mode;
+                b.className = active ? 'btn btn-info active' : 'btn btn-outline-info';
+            });
+        }
+        document.getElementById('toggleMineros').addEventListener('click', e => {
+            const btn = e.target.closest('button[data-mmode]');
+            if (btn) applyModeMin(btn.dataset.mmode);
         });
     }
 

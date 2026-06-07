@@ -656,12 +656,17 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                 len(char_map), len(corp_ids), oldest_period, sorted_periods[-1])
 
     agg = defaultdict(lambda: {
-        "main_char_name": "",
-        "corporation_id": 0,
-        "ships_destroyed": 0,
-        "ships_lost":      0,
-        "isk_destroyed":   0.0,
-        "isk_lost":        0.0,
+        "main_char_name":   "",
+        "corporation_id":   0,
+        "ships_destroyed":  0,
+        "ships_lost":       0,
+        "isk_destroyed":    0.0,
+        "isk_lost":         0.0,
+        "final_blows":      0,
+        "participations":   0,
+        "solo_kills":       0,
+        "top_damage_kills": 0,
+        "damage_dealt":     0,
     })
 
     total_esi = 0

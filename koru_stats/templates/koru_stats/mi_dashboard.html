@@ -118,9 +118,15 @@
         <div class="col-6 col-md-3">
             <div class="card stat-card ore h-100">
                 <div class="card-body">
-                    <div class="stat-label mb-1">Valor minado</div>
+                    <div class="stat-label mb-1">Valor minado
+                        <span class="ms-1">
+                            <button class="btn btn-outline-warning py-0 px-1 ore-kpi-btn" style="font-size:9px" data-val="raw">Bruto</button>
+                            <button class="btn btn-outline-warning py-0 px-1 ore-kpi-btn" style="font-size:9px" data-val="comp">Comp.</button>
+                            <button class="btn btn-warning py-0 px-1 ore-kpi-btn active" style="font-size:9px" data-val="repr">85%</button>
+                        </span>
+                    </div>
                     <div class="stat-big text-warning" id="kpiIskOre">—</div>
-                    <small class="text-muted">ISK estimado</small>
+                    <small class="text-muted" id="kpiIskOreLabel">ISK repr. 85%</small>
                 </div>
             </div>
         </div>
@@ -455,16 +461,38 @@
     const fmtISK = v => v >= 1e12 ? (v/1e12).toFixed(2)+' T' : v >= 1e9 ? (v/1e9).toFixed(2)+' B' : v >= 1e6 ? (v/1e6).toFixed(2)+' M' : v >= 1e3 ? (v/1e3).toFixed(1)+' K' : v.toFixed(0);
 
     const totalIskOre      = parseFloat("{{ total_isk_ore|floatformat:2 }}".replace(",",".")) || 0;
+    const totalIskOreComp  = parseFloat("{{ total_isk_ore_comp|floatformat:2 }}".replace(",",".")) || 0;
+    const totalIskOreRepr  = parseFloat("{{ total_isk_ore_repr|floatformat:2 }}".replace(",",".")) || 0;
     const bountiesDirectos = parseFloat("{{ bounties_desglose.bounties_directos|floatformat:2 }}".replace(",",".")) || 0;
     const essPagos         = parseFloat("{{ bounties_desglose.ess_pagos|floatformat:2 }}".replace(",",".")) || 0;
     const totalBounties    = parseFloat("{{ bounties_desglose.total|floatformat:2 }}".replace(",",".")) || 0;
 
+    const oreVals  = { raw: totalIskOre, comp: totalIskOreComp, repr: totalIskOreRepr };
+    const oreLabels = { raw: 'ISK bruto', comp: 'ISK comprimido', repr: 'ISK repr. 85%' };
+    let currentOreVal = totalIskOreRepr;
+
     const el = id => document.getElementById(id);
-    if (el('kpiIskOre'))      el('kpiIskOre').textContent      = fmtISK(totalIskOre);
+    if (el('kpiIskOre'))      el('kpiIskOre').textContent      = fmtISK(totalIskOreRepr);
     if (el('kpiBounties'))    el('kpiBounties').textContent    = fmtISK(bountiesDirectos);
     if (el('kpiEss'))         el('kpiEss').textContent         = fmtISK(essPagos);
     if (el('kpiBountiesTotal')) el('kpiBountiesTotal').textContent = fmtISK(totalBounties);
-    if (el('kpiTotal'))       el('kpiTotal').textContent       = fmtISK(totalIskOre + totalBounties);
+    if (el('kpiTotal'))       el('kpiTotal').textContent       = fmtISK(totalIskOreRepr + totalBounties);
+
+    document.querySelectorAll('.ore-kpi-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const val = btn.dataset.val;
+            document.querySelectorAll('.ore-kpi-btn').forEach(b => {
+                b.classList.remove('btn-warning', 'active');
+                b.classList.add('btn-outline-warning');
+            });
+            btn.classList.remove('btn-outline-warning');
+            btn.classList.add('btn-warning', 'active');
+            currentOreVal = oreVals[val];
+            if (el('kpiIskOre'))      el('kpiIskOre').textContent      = fmtISK(currentOreVal);
+            if (el('kpiIskOreLabel')) el('kpiIskOreLabel').textContent  = oreLabels[val];
+            if (el('kpiTotal'))       el('kpiTotal').textContent        = fmtISK(currentOreVal + totalBounties);
+        });
+    });
 
     const dataMining = {{ chart_mining_personal|safe }};
     const ctxM = document.getElementById('chartMiningPersonal');

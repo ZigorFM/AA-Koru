@@ -782,7 +782,9 @@ def mi_dashboard(request):
     total_minado   = sum(int(r["total_unidades"]) for r in mining_personal)
     total_bounties = sum(float(Decimal(str(r["total_isk"]))) for r in bounties_diarios)
     total_m3       = sum(float(r["m3_total"] or 0) for r in ore_breakdown)
-    total_isk_ore  = sum(float(r["isk_estimado"] or 0) for r in ore_breakdown)
+    total_isk_ore      = sum(float(r["isk_estimado"] or 0) for r in ore_breakdown)
+    total_isk_ore_comp = sum(float(r["isk_comp"]     or 0) for r in ore_breakdown)
+    total_isk_ore_repr = sum(float(r["isk_repr"]     or 0) for r in ore_breakdown)
     top_ore_chart  = sorted(ore_breakdown, key=lambda r: float(r["isk_estimado"] or 0), reverse=True)[:8]
 
     context = {
@@ -795,8 +797,10 @@ def mi_dashboard(request):
         "total_minado":      total_minado,
         "total_bounties":    total_bounties,
         "total_m3":          total_m3,
-        "total_isk_ore":     total_isk_ore,
-        "error_mining":      error_mining,
+        "total_isk_ore":      total_isk_ore,
+        "total_isk_ore_comp": total_isk_ore_comp,
+        "total_isk_ore_repr": total_isk_ore_repr,
+        "error_mining":       error_mining,
         "error_bounties":    error_bounties,
         "error_ore":         error_ore,
         "chart_mining_personal": _to_json({"labels": [r["nombre"] for r in mining_personal], "data": [int(r["total_unidades"]) for r in mining_personal]}),
@@ -1080,6 +1084,23 @@ def corp_dashboard(request):
         logger.error("koru_stats corp_contribuidores_ant: %s", e)
         error_contrib = True
 
+    # Totales mes anterior para deltas %
+    corp_ingresos_cat_ant, corp_gastos_cat_ant = [], []
+    try:
+        sql, params = _build_corp_wallet_by_category(inicio_ant, fin_ant, only_income=True)
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            corp_ingresos_cat_ant = _categorize_wallet(_fetchall(cursor), CORP_INCOME_CATEGORIES, True)
+    except Exception as e:
+        logger.error("koru_stats corp_ingresos_ant: %s", e)
+    try:
+        sql, params = _build_corp_wallet_by_category(inicio_ant, fin_ant, only_income=False)
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            corp_gastos_cat_ant = _categorize_wallet(_fetchall(cursor), CORP_EXPENSE_CATEGORIES, False)
+    except Exception as e:
+        logger.error("koru_stats corp_gastos_ant: %s", e)
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(SQL_CORP_INGRESOS_DIARIOS, [inicio, fin])
@@ -1116,8 +1137,10 @@ def corp_dashboard(request):
         "corp_names":       corp_names,
         "corp_ingresos_cat": corp_ingresos_cat,
         "corp_gastos_cat":   corp_gastos_cat,
-        "total_ingresos_cat": sum(c["total"] for c in corp_ingresos_cat),
-        "total_gastos_cat":   sum(c["total"] for c in corp_gastos_cat),
+        "total_ingresos_cat":     sum(c["total"] for c in corp_ingresos_cat),
+        "total_gastos_cat":       sum(c["total"] for c in corp_gastos_cat),
+        "total_ingresos_cat_ant": sum(c["total"] for c in corp_ingresos_cat_ant),
+        "total_gastos_cat_ant":   sum(c["total"] for c in corp_gastos_cat_ant),
         "resumen":          resumen,
         "contribuidores":   _add_comparativa(contribuidores, contribuidores_ant, "total_tax"),
         "ingresos_diarios": ingresos_diarios,

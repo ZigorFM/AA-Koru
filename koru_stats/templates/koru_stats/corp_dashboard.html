@@ -82,18 +82,18 @@
                 <li class="nav-item">
                     <a class="nav-link" data-tab="ingresos" href="#">
                         <i class="fas fa-arrow-up me-1 text-success"></i>Ingresos
-                        <span class="badge bg-success ms-1" id="badgeIngresos">—</span>
+                        <span class="badge bg-success ms-1" id="badgeIngresos">—</span><span class="ms-1 small" id="deltaIngresos" style="font-size:11px"></span>
                     </a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" data-tab="gastos" href="#">
                         <i class="fas fa-arrow-down me-1 text-danger"></i>Gastos
-                        <span class="badge bg-danger ms-1" id="badgeGastos">—</span>
+                        <span class="badge bg-danger ms-1" id="badgeGastos">—</span><span class="ms-1 small" id="deltaGastos" style="font-size:11px"></span>
                     </a>
                 </li>
                 <li class="nav-item ms-auto d-flex align-items-center pe-2">
                     <span class="small text-muted me-2">Balance:</span>
-                    <span class="fw-bold" id="balanceTotal">—</span>
+                    <span class="fw-bold" id="balanceTotal">—</span><span class="ms-2 small" id="deltaBalance" style="font-size:11px"></span>
                 </li>
             </ul>
         </div>
@@ -480,9 +480,21 @@
         return v.toFixed(0);
     };
 
-    const totalIngresos = parseFloat("{{ total_ingresos_cat|floatformat:2 }}".replace(',','.')) || 0;
-    const totalGastos   = parseFloat("{{ total_gastos_cat|floatformat:2 }}".replace(',','.')) || 0;
-    const balance       = totalIngresos - totalGastos;
+    const totalIngresos    = parseFloat("{{ total_ingresos_cat|floatformat:2 }}".replace(',','.')) || 0;
+    const totalGastos      = parseFloat("{{ total_gastos_cat|floatformat:2 }}".replace(',','.')) || 0;
+    const totalIngresosAnt = parseFloat("{{ total_ingresos_cat_ant|floatformat:2 }}".replace(',','.')) || 0;
+    const totalGastosAnt   = parseFloat("{{ total_gastos_cat_ant|floatformat:2 }}".replace(',','.')) || 0;
+    const balance          = totalIngresos - totalGastos;
+    const balanceAnt       = totalIngresosAnt - totalGastosAnt;
+
+    function fmtDelta(current, previous, invertColors) {
+        if (!previous) return '';
+        const pct = ((current - previous) / Math.abs(previous)) * 100;
+        const up  = pct >= 0;
+        const goodColor = invertColors ? (up ? '#ef4444' : '#10b981') : (up ? '#10b981' : '#ef4444');
+        const arrow = up ? '▲' : '▼';
+        return `<span style="color:${goodColor}">${arrow} ${Math.abs(pct).toFixed(1)}%</span>`;
+    }
 
     // Badges
     const bi = document.getElementById('badgeIngresos');
@@ -490,12 +502,18 @@
     const bt = document.getElementById('balanceTotal');
     const ti = document.getElementById('totalIngresosLabel');
     const tg = document.getElementById('totalGastosLabel');
+    const di = document.getElementById('deltaIngresos');
+    const dg = document.getElementById('deltaGastos');
+    const db = document.getElementById('deltaBalance');
 
     if (bi) bi.textContent = fmtISK(totalIngresos);
     if (bg) bg.textContent = fmtISK(totalGastos);
     if (bt) { bt.textContent = fmtISK(Math.abs(balance)) + ' ISK'; bt.className = 'fw-bold ' + (balance >= 0 ? 'balance-positive' : 'balance-negative'); }
     if (ti) ti.textContent = fmtISK(totalIngresos) + ' ISK';
     if (tg) tg.textContent = fmtISK(totalGastos) + ' ISK';
+    if (di && totalIngresosAnt) di.innerHTML = fmtDelta(totalIngresos, totalIngresosAnt, false);
+    if (dg && totalGastosAnt)   dg.innerHTML = fmtDelta(totalGastos,   totalGastosAnt,   true);
+    if (db && balanceAnt)       db.innerHTML = fmtDelta(balance,        balanceAnt,        false);
 
     // Tabs
     const tabs = document.querySelectorAll('[data-tab]');

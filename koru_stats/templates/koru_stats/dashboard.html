@@ -9,6 +9,13 @@
     {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
 {% endblock %}
 
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:mi_dashboard" as url_personal %}
+    {% url "koru_stats:pvp_dashboard" as url_pvp %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-danger" url=url_pvp title="PvP" fa_icon="fa-solid fa-crosshairs" icon_on_mobile=True icon_on_desktop=True %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_personal title="Mi Dashboard" fa_icon="fa-solid fa-user-astronaut" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
 {% block extra_css %}
 <style>
 .kpi-card { border-radius:10px; }

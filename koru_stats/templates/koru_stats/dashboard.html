@@ -193,8 +193,11 @@
                     <tbody>
                       {% for r in ore_breakdown %}
                       <tr>
-                        <td class="small">{{ r.ore }}</td>
-                        <td class="text-end text-muted small">{{ r.m3_total|floatformat:0 }}</td>
+                        <td class="small">
+                          <img src="https://images.evetech.net/types/{{ r.type_id }}/icon?size=32" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:4px" onerror="this.style.display='none'">
+                          {{ r.ore }}
+                        </td>
+                        <td class="text-end text-muted small">{{ r.m3_total|floatformat:"0g" }}</td>
                         <td class="text-end fw-bold small" style="color:#06b6d4">{{ r.isk_estimado|rkisk }}</td>
                       </tr>
                       {% endfor %}

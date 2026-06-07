@@ -263,7 +263,7 @@ def _summary_ore_breakdown_corp(corp_ids, period):
     """Desglose de ore de la corp desde CharacterMonthlyOre."""
     rows = (CharacterMonthlyOre.objects
             .filter(period=period, corporation_id__in=corp_ids)
-            .values("type_name")
+            .values("type_name", "type_id")
             .annotate(
                 unidades=Sum("quantity"),
                 m3_total=Sum("m3"),
@@ -275,6 +275,7 @@ def _summary_ore_breakdown_corp(corp_ids, period):
     return [
         {
             "ore":          r["type_name"],
+            "type_id":      r["type_id"],
             "unidades":     r["unidades"],
             "m3_total":     float(r["m3_total"] or 0),
             "isk_estimado": float(r["isk_estimado"] or 0),
@@ -492,9 +493,11 @@ def _add_comparativa(actual, anterior, campo):
         val_ant = ant_map.get(r["nombre"], 0)
         if val_ant > 0:
             delta = ((val_act - val_ant) / val_ant) * 100
-            r["delta_pct"]  = round(delta, 1)
+            r["delta"]      = round(delta, 1)
+            r["delta_pct"]  = round(abs(delta), 1)
             r["delta_dir"]  = "up" if delta >= 0 else "down"
         else:
+            r["delta"]      = None
             r["delta_pct"]  = None
             r["delta_dir"]  = "new"
         result.append(r)

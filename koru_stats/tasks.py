@@ -588,22 +588,37 @@ def aggregate_character_monthly_summary(periods=None, full=False):
 
 
 # ---------------------------------------------------------------------------
-# Tarea 3 — CharacterMonthlyPvp (desde zKillboard API directa)
+# Tarea 3 — CharacterMonthlyPvp (zKillboard corp-level + ESI por killmail)
 # ---------------------------------------------------------------------------
+
+ESI_BASE = "https://esi.evetech.net/latest"
+ESI_HEADERS = {"User-Agent": "Rekium koru_stats/1.0 contact:sietehierros@gmail.com"}
+
+
+def _esi_killmail(killmail_id, kz_hash):
+    """Fetch killmail completo desde ESI. Devuelve dict o None."""
+    url = f"{ESI_BASE}/killmails/{killmail_id}/{kz_hash}/"
+    try:
+        r = http_requests.get(url, headers=ESI_HEADERS, timeout=15)
+        if r.status_code == 200:
+            return r.json()
+    except Exception as exc:
+        logger.warning("ESI killmail %s: %s", killmail_id, exc)
+    return None
+
 
 @shared_task
 def fetch_pvp_from_zkillboard(periods=None, full=False):
     """
-    Descarga kills/losses de zKillboard por personaje y agrupa en CharacterMonthlyPvp.
+    Descarga kills/losses de zKillboard a nivel de CORP (pocas llamadas zkill)
+    y usa ESI para identificar el personaje implicado en cada killmail.
 
-    Estrategia:
-    - Por cada personaje de miembro activo: query zkill con filtro year/month
-    - kills:  count = n. killmails, isk_destroyed = sum zkb.totalValue
-    - losses: count = n. killmails, isk_lost      = sum zkb.totalValue
-    - Agrupa por main_character_id + period y hace update_or_create
-    - No necesita ESI — zkb.totalValue ya contiene el ISK correcto
+    Kills:  attacker con final_blow=True que pertenezca a nuestra corp
+    Losses: victim que pertenezca a nuestra corp
 
-    Llamar con full=True para poblar historico completo (lento, ~1 peticion/char/mes).
+    Ventajas vs consulta por personaje:
+    - Solo 2 calls zkill por corp/mes (no 2xN_personajes)
+    - ESI tiene rate-limit mucho más alto que zkill
     """
     from collections import defaultdict
 
@@ -621,13 +636,15 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         logger.warning("koru fetch_pvp: sin periodos")
         return 0
 
+    # Mapa char_id (EVE) → {main_char_id, main_char_name, corporation_id}
     characters = _get_corp_characters(corp_ids)
     if not characters:
         logger.warning("koru fetch_pvp: sin personajes en corp")
         return 0
 
-    logger.info("koru fetch_pvp: %d chars x %d periodos = %d calls estimadas",
-                len(characters), len(periods), len(characters) * len(periods) * 2)
+    char_map = {c["char_id"]: c for c in characters}
+    logger.info("koru fetch_pvp: %d chars mapeados, %d corps, %d periodos",
+                len(char_map), len(corp_ids), len(periods))
 
     # aggregation: {(main_char_id, period) -> dict}
     agg = defaultdict(lambda: {
@@ -639,15 +656,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         "isk_lost":        0.0,
     })
 
-    total_calls = 0
-    for idx, char in enumerate(characters):
-        if idx > 0 and idx % 50 == 0:
-            logger.info("koru fetch_pvp: progreso %d/%d chars", idx, len(characters))
-        char_id    = char["char_id"]
-        main_id    = char["main_char_id"]
-        main_name  = char["main_char_name"]
-        corp_id    = char["corporation_id"]
-
+    for corp_id in corp_ids:
         for period in periods:
             anio_i, mes_i = int(period.split("-")[0]), int(period.split("-")[1])
             last_day = calendar.monthrange(anio_i, mes_i)[1]
@@ -655,35 +664,54 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
             t_end    = f"{anio_i}{mes_i:02d}{last_day:02d}235959"
             time_filter = f"startTime/{t_start}/endTime/{t_end}/"
 
-            # ── Kills ──
-            url_kills = f"{ZKILL_BASE}/kills/characterID/{char_id}/{time_filter}"
-            kills = _zkill_get(url_kills)
-            total_calls += 1
-            kills_dicts = [k for k in kills if isinstance(k, dict)]
-            if kills_dicts:
-                key = (main_id, period)
-                agg[key]["main_char_name"] = main_name
-                agg[key]["corporation_id"] = corp_id
-                agg[key]["ships_destroyed"] += len(kills_dicts)
-                agg[key]["isk_destroyed"]   += sum(
-                    float(k.get("zkb", {}).get("totalValue", 0) or 0)
-                    for k in kills_dicts
-                )
+            for kind in ("kills", "losses"):
+                url = f"{ZKILL_BASE}/{kind}/corporationID/{corp_id}/{time_filter}"
+                killmails = _zkill_get(url, max_pages=20)
+                killmails = [k for k in killmails if isinstance(k, dict)]
 
-            # ── Losses ──
-            url_losses = f"{ZKILL_BASE}/losses/characterID/{char_id}/{time_filter}"
-            losses = _zkill_get(url_losses)
-            total_calls += 1
-            losses_dicts = [l for l in losses if isinstance(l, dict)]
-            if losses_dicts:
-                key = (main_id, period)
-                agg[key]["main_char_name"] = main_name
-                agg[key]["corporation_id"] = corp_id
-                agg[key]["ships_lost"] += len(losses_dicts)
-                agg[key]["isk_lost"]   += sum(
-                    float(l.get("zkb", {}).get("totalValue", 0) or 0)
-                    for l in losses_dicts
-                )
+                logger.info("koru fetch_pvp: corp=%s period=%s %s → %d killmails",
+                            corp_id, period, kind, len(killmails))
+
+                for km in killmails:
+                    km_id   = km.get("killmail_id")
+                    zkb     = km.get("zkb", {})
+                    km_hash = zkb.get("hash")
+                    value   = float(zkb.get("totalValue", 0) or 0)
+                    if not km_id or not km_hash:
+                        continue
+
+                    # Fetch ESI para saber qué personaje fue
+                    esi = _esi_killmail(km_id, km_hash)
+                    if not esi:
+                        continue
+                    time.sleep(0.05)   # ESI rate-limit suave
+
+                    if kind == "losses":
+                        victim = esi.get("victim", {})
+                        char_id = victim.get("character_id")
+                        if char_id and char_id in char_map:
+                            c = char_map[char_id]
+                            key = (c["main_char_id"], period)
+                            agg[key]["main_char_name"] = c["main_char_name"]
+                            agg[key]["corporation_id"] = c["corporation_id"]
+                            agg[key]["ships_lost"]  += 1
+                            agg[key]["isk_lost"]    += value
+
+                    else:  # kills — buscamos final blow de nuestra corp
+                        for att in esi.get("attackers", []):
+                            if not att.get("final_blow"):
+                                continue
+                            char_id = att.get("character_id")
+                            if char_id and char_id in char_map:
+                                c = char_map[char_id]
+                                key = (c["main_char_id"], period)
+                                agg[key]["main_char_name"] = c["main_char_name"]
+                                agg[key]["corporation_id"] = c["corporation_id"]
+                                agg[key]["ships_destroyed"] += 1
+                                agg[key]["isk_destroyed"]   += value
+                            break  # solo un final blow
+
+                time.sleep(0.5)   # pausa entre calls zkill
 
     # ── Persistir ──
     saved = 0
@@ -704,10 +732,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         )
         saved += 1
 
-    logger.info(
-        "koru fetch_pvp: %d registros guardados, %d calls zkill, %d periodos",
-        saved, total_calls, len(periods),
-    )
+    logger.info("koru fetch_pvp DONE: %d registros guardados", saved)
     return saved
 
 

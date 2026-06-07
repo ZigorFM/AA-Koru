@@ -230,6 +230,8 @@ def _get_ore_data():
             )
             for ore_id, mat_id, qty in cursor.fetchall():
                 ps = portion_by_id.get(ore_id, 100)
+                if qty is None:
+                    continue
                 qty_per_unit = float(qty) / max(ps, 1)
                 ore_materials.setdefault(ore_id, []).append((mat_id, qty_per_unit))
 

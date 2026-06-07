@@ -62,6 +62,24 @@ def register_menu_lunas():
     )
 
 
+class PvpMenuHook(MenuItemHook):
+    def render(self, request):
+        if _tiene_acceso(request):
+            return super().render(request)
+        return ""
+
+
+@hooks.register("menu_item_hook")
+def register_menu_pvp():
+    return PvpMenuHook(
+        "🌀 Koru — PvP",
+        "fas fa-crosshairs fa-fw",
+        "koru_stats:pvp_dashboard",
+        navactive=["koru_stats:pvp_dashboard"],
+        order=1203,
+    )
+
+
 @hooks.register("url_hook")
 def register_urls():
     return UrlHook(urls, "koru_stats", r"^koru/")

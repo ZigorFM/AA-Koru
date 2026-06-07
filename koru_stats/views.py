@@ -574,8 +574,10 @@ def mi_dashboard(request):
 
     try:
         # ORM sobre CharacterMonthlyOre — sin JOINs
+        # main.character_id = EVE Online ID (el que guardamos en tasks.py)
+        # main.id = Django PK (diferente)
         ore_rows = (CharacterMonthlyOre.objects
-                    .filter(main_character_id=main.id, period=periodo_sel)
+                    .filter(main_character_id=main.character_id, period=periodo_sel)
                     .order_by("-m3"))
         ore_breakdown = [
             {

@@ -146,8 +146,8 @@ def _fetch_fuzzwork_prices(type_ids):
             for tid_str, prices in data.items():
                 tid = int(tid_str)
                 result[tid] = {
-                    "buy":  float(prices.get("buy",  {}).get("max", 0) or 0),
-                    "sell": float(prices.get("sell", {}).get("min", 0) or 0),
+                    "buy":  float((prices.get("buy")  or {}).get("max", 0) or 0),
+                    "sell": float((prices.get("sell") or {}).get("min", 0) or 0),
                 }
         except Exception as exc:
             logger.error("koru _fetch_fuzzwork_prices chunk %d: %s", i, exc)

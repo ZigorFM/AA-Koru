@@ -68,7 +68,9 @@
                     <div class="btn-group btn-group-sm" role="group" id="toggleMineros">
                         <button type="button" class="btn btn-outline-info" data-mode="unidades">Unidades</button>
                         <button type="button" class="btn btn-outline-info" data-mode="m3">Volumen m³</button>
-                        <button type="button" class="btn btn-info active" data-mode="isk">ISK est.</button>
+                        <button type="button" class="btn btn-outline-info" data-mode="isk">ISK Bruto</button>
+                        <button type="button" class="btn btn-outline-info" data-mode="isk_comp">ISK Comp.</button>
+                        <button type="button" class="btn btn-info active" data-mode="isk_repr">ISK 85%</button>
                     </div>
                 </div>
                 <div class="card-body">
@@ -77,16 +79,18 @@
                     {% else %}
                         <div class="chart-container mb-3"><canvas id="chartMineros"></canvas></div>
                         <table class="table table-sm table-hover align-middle">
-                            <thead class="table-dark"><tr><th style="width:40px">#</th><th>Piloto</th><th class="text-end" id="headerMineros">ISK est.</th><th class="text-end" style="width:60px">vs ant.</th></tr></thead>
+                            <thead class="table-dark"><tr><th style="width:40px">#</th><th>Piloto</th><th class="text-end" id="headerMineros">ISK 85%</th><th class="text-end" style="width:60px">vs ant.</th></tr></thead>
                             <tbody>
                                 {% for r in top_mineros %}
                                 <tr>
                                     <td>{% if forloop.counter == 1 %}<i class="fas fa-medal medal-1"></i>{% elif forloop.counter == 2 %}<i class="fas fa-medal medal-2"></i>{% elif forloop.counter == 3 %}<i class="fas fa-medal medal-3"></i>{% else %}<span class="text-muted">{{ forloop.counter }}</span>{% endif %}</td>
                                     <td><img src="https://images.evetech.net/characters/{{ r.char_id }}/portrait?size=32" class="pilot-portrait me-2" onerror="this.style.display='none'">{{ r.nombre }}</td>
                                     <td class="text-end font-monospace">
-                                        <span class="val-unidades">{{ r.total_unidades|rknum }}</span>
+                                        <span class="val-unidades" style="display:none">{{ r.total_unidades|rknum }}</span>
                                         <span class="val-m3" style="display:none">{{ r.total_m3|rknum }}</span>
                                         <span class="val-isk" style="display:none">{{ r.total_isk|rkisk }}</span>
+                                        <span class="val-isk_comp" style="display:none">{{ r.total_isk_compressed|rkisk }}</span>
+                                        <span class="val-isk_repr">{{ r.total_isk_reprocessed|rkisk }}</span>
                                     </td>
                                     <td class="text-end">
                                         {% if r.delta_dir == "up" %}
@@ -187,7 +191,9 @@
                                         <td class="small">{{ r.ore }}</td>
                                         <td class="text-end font-monospace small">{{ r.unidades|rknum }}</td>
                                         <td class="text-end font-monospace small">{{ r.m3_total|rknum }}</td>
-                                        <td class="text-end font-monospace small text-warning">{{ r.isk_estimado|rkisk }}</td>
+                                        <td class="text-end font-monospace small text-warning">
+                                          <span class="ore-isk-val" data-isk_estimado="{{ r.isk_estimado }}" data-isk_comp="{{ r.isk_comp }}" data-isk_repr="{{ r.isk_repr }}">{{ r.isk_repr|rkisk }}</span>
+                                        </td>
                                         <td><div class="ore-bar" style="width:0%" data-m3="{{ r.m3_total }}"></div></td>
                                     </tr>
                                     {% endfor %}
@@ -261,9 +267,11 @@
     let chartMineros = null;
 
     const modeConfig = {
-        unidades: { data: dataMin.unidades, fmt: v => fmtNum(v) + ' u',   label: 'Unidades' },
-        m3:       { data: dataMin.m3,       fmt: v => fmtNum(v) + ' m³',  label: 'Volumen m³' },
-        isk:      { data: dataMin.isk,      fmt: v => fmtISK(v) + ' ISK', label: 'ISK estimado' },
+        unidades: { data: dataMin.unidades,  fmt: v => fmtNum(v) + ' u',   label: 'Unidades' },
+        m3:       { data: dataMin.m3,        fmt: v => fmtNum(v) + ' m³',  label: 'Volumen m³' },
+        isk:      { data: dataMin.isk,       fmt: v => fmtISK(v) + ' ISK', label: 'ISK Bruto' },
+        isk_comp: { data: dataMin.isk_comp,  fmt: v => fmtISK(v) + ' ISK', label: 'ISK Comprimido' },
+        isk_repr: { data: dataMin.isk_repr,  fmt: v => fmtISK(v) + ' ISK', label: 'ISK 85% repr.' },
     };
 
     function buildChartMineros(mode) {
@@ -277,31 +285,34 @@
             },
             options: {
                 ...baseOpts,
-                scales: { y: { beginAtZero: true, ticks: { callback: mode === 'isk' ? fmtISK : fmtNum } } },
+                scales: { y: { beginAtZero: true, ticks: { callback: (mode === 'isk' || mode === 'isk_comp' || mode === 'isk_repr') ? fmtISK : fmtNum } } },
                 plugins: { ...baseOpts.plugins, tooltip: { callbacks: { label: ctx => ' ' + cfg.fmt(ctx.raw) } } }
             }
         });
     }
 
-    const modeHeaders = { unidades: 'Unidades', m3: 'Volumen m³', isk: 'ISK est.' };
+    const modeHeaders = { unidades: 'Unidades', m3: 'Volumen m³', isk: 'ISK Bruto', isk_comp: 'ISK Comp.', isk_repr: 'ISK 85%' };
 
     function updateTable(mode) {
         document.getElementById('headerMineros').textContent = modeHeaders[mode];
         document.querySelectorAll('.val-unidades').forEach(el => el.style.display = mode === 'unidades' ? '' : 'none');
         document.querySelectorAll('.val-m3').forEach(el => el.style.display = mode === 'm3' ? '' : 'none');
         document.querySelectorAll('.val-isk').forEach(el => el.style.display = mode === 'isk' ? '' : 'none');
+        document.querySelectorAll('.val-isk_comp').forEach(el => el.style.display = mode === 'isk_comp' ? '' : 'none');
+        document.querySelectorAll('.val-isk_repr').forEach(el => el.style.display = mode === 'isk_repr' ? '' : 'none');
     }
 
     if (ctxMin && dataMin.labels.length) {
-        buildChartMineros('isk');
-        updateTable('isk');
+        buildChartMineros('isk_repr');
+        updateTable('isk_repr');
         document.getElementById('toggleMineros').addEventListener('click', e => {
             const btn = e.target.closest('button[data-mode]');
             if (!btn) return;
             document.querySelectorAll('#toggleMineros button').forEach(b => {
                 b.className = 'btn btn-outline-info btn-sm';
             });
-            btn.className = 'btn btn-info btn-sm active';
+            btn.classList.remove('btn-outline-info');
+            btn.classList.add('btn-info', 'active');
             buildChartMineros(btn.dataset.mode);
             updateTable(btn.dataset.mode);
         });
@@ -318,6 +329,25 @@
     if (ctxOre && dataOre.labels.length) {
         new Chart(ctxOre, { type: 'doughnut', data: { labels: dataOre.labels, datasets: [{ data: dataOre.data, backgroundColor: PALETTE.slice(0, dataOre.data.length), hoverOffset: 8 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '55%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } } });
     }
+
+    // ── Ore ISK type switcher ─────────────────────────────────────────
+    document.querySelectorAll('.ore-isk-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const isk_key = btn.dataset.isk;
+            document.querySelectorAll('.ore-isk-btn').forEach(b => {
+                b.classList.remove('btn-warning', 'active');
+                b.classList.add('btn-outline-warning');
+            });
+            btn.classList.remove('btn-outline-warning');
+            btn.classList.add('btn-warning', 'active');
+            const labels = { isk_estimado: 'ISK Bruto', isk_comp: 'ISK Comp.', isk_repr: 'ISK 85%' };
+            document.getElementById('headerOre').childNodes[0].textContent = labels[isk_key] + ' ';
+            document.querySelectorAll('.ore-isk-val').forEach(el => {
+                const v = parseFloat(el.dataset[isk_key]) || 0;
+                el.textContent = v >= 1e9 ? (v/1e9).toFixed(2)+' B' : v >= 1e6 ? (v/1e6).toFixed(2)+' M' : v >= 1e3 ? (v/1e3).toFixed(1)+' K' : v.toFixed(0);
+            });
+        });
+    });
 })();
 
 // ── Tendencias históricas ───────────────────────────────────────

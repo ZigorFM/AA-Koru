@@ -227,14 +227,16 @@ def _summary_top_mineros(corp_ids, period, limit=10):
     """Top mineros del período desde CharacterMonthlySummary."""
     qs = (CharacterMonthlySummary.objects
           .filter(period=period, corporation_id__in=corp_ids)
-          .order_by("-mining_isk")[:limit])
+          .order_by("-mining_isk_reprocessed")[:limit])
     return [
         {
-            "nombre":         r.main_character_name,
-            "char_id":        r.main_character_id,
-            "total_unidades": int(r.mining_units),
-            "total_m3":       float(r.mining_m3),
-            "total_isk":      float(r.mining_isk),
+            "nombre":              r.main_character_name,
+            "char_id":             r.main_character_id,
+            "total_unidades":      int(r.mining_units),
+            "total_m3":            float(r.mining_m3),
+            "total_isk":           float(r.mining_isk),
+            "total_isk_compressed":  float(r.mining_isk_compressed),
+            "total_isk_reprocessed": float(r.mining_isk_reprocessed),
         }
         for r in qs
     ]
@@ -266,22 +268,25 @@ def _summary_ore_breakdown_corp(corp_ids, period):
                 unidades=Sum("quantity"),
                 m3_total=Sum("m3"),
                 isk_estimado=Sum("isk"),
+                isk_comp=Sum("isk_compressed"),
+                isk_repr=Sum("isk_reprocessed"),
             )
             .order_by("-m3_total"))
-    # Renombrar type_name → ore para compatibilidad con el template
     return [
         {
             "ore":          r["type_name"],
             "unidades":     r["unidades"],
             "m3_total":     float(r["m3_total"] or 0),
             "isk_estimado": float(r["isk_estimado"] or 0),
+            "isk_comp":     float(r["isk_comp"] or 0),
+            "isk_repr":     float(r["isk_repr"] or 0),
         }
         for r in rows
     ]
 
 
 def _summary_tendencias_mineria(corp_ids, n_months=6):
-    """Tendencias de minería de los últimos N meses desde CharacterMonthlySummary."""
+    """Tendencias de minería+bounties de los últimos N meses desde CharacterMonthlySummary."""
     hoy = datetime.now()
     periods = []
     for i in range(n_months):
@@ -298,6 +303,7 @@ def _summary_tendencias_mineria(corp_ids, n_months=6):
             .annotate(
                 unidades=Sum("mining_units"),
                 isk_mineria=Sum("mining_isk"),
+                isk_bounties=Sum(F("bounty_isk") + F("ess_isk")),
             )
             .order_by("period"))
     return [dict(r) for r in rows]
@@ -557,21 +563,11 @@ def dashboard(request):
         logger.error("koru_stats top_pvp: %s", e)
         error_pvp = True
 
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(SQL_TENDENCIAS_BOUNTIES)
-            tendencias_bounties = _fetchall(cursor)
-    except Exception as e:
-        logger.error("koru_stats tendencias_bounties: %s", e)
-
-    # Combinar períodos para la gráfica
-    periodos_tend = sorted(set(
-        [r["period"] for r in tendencias_mineria] +
-        [r["periodo"] for r in tendencias_bounties]
-    ))
-    min_by_period  = {r["period"]:   float(r["isk_mineria"] or 0)  for r in tendencias_mineria}
-    bou_by_period  = {r["periodo"]:  float(r["isk_bounties"] or 0) for r in tendencias_bounties}
-    uni_by_period  = {r["period"]:   int(r["unidades"] or 0)       for r in tendencias_mineria}
+    # tendencias_bounties viene integrado en tendencias_mineria (CharacterMonthlySummary)
+    periodos_tend = [r["period"] for r in tendencias_mineria]
+    min_by_period  = {r["period"]: float(r["isk_mineria"]  or 0) for r in tendencias_mineria}
+    bou_by_period  = {r["period"]: float(r["isk_bounties"] or 0) for r in tendencias_mineria}
+    uni_by_period  = {r["period"]: int(r["unidades"]       or 0) for r in tendencias_mineria}
 
     context = {
         "mes":               date(anio, mes, 1).strftime("%B %Y"),
@@ -586,10 +582,12 @@ def dashboard(request):
         "error_bounties":    error_bounties,
         "error_ore":         error_ore,
         "chart_mineros":  _to_json({
-            "labels":   [r["nombre"] for r in top_mineros],
-            "unidades": [int(r["total_unidades"]) for r in top_mineros],
-            "m3":       [float(r["total_m3"] or 0) for r in top_mineros],
-            "isk":      [float(r["total_isk"] or 0) for r in top_mineros],
+            "labels":    [r["nombre"] for r in top_mineros],
+            "unidades":  [int(r["total_unidades"]) for r in top_mineros],
+            "m3":        [float(r["total_m3"] or 0) for r in top_mineros],
+            "isk":       [float(r["total_isk"] or 0) for r in top_mineros],
+            "isk_comp":  [float(r.get("total_isk_compressed", 0) or 0) for r in top_mineros],
+            "isk_repr":  [float(r.get("total_isk_reprocessed", 0) or 0) for r in top_mineros],
         }),
         "chart_bounties": _to_json({"labels": [r["nombre"] for r in top_bounties], "data": [float(Decimal(str(r["total_isk"]))) for r in top_bounties]}),
         "chart_ore":      _to_json({"labels": [r["ore"] for r in top_ore_chart], "data": [float(r["isk_estimado"] or 0) for r in top_ore_chart]}),
@@ -656,6 +654,8 @@ def mi_dashboard(request):
                 "unidades":     int(r.quantity),
                 "m3_total":     float(r.m3),
                 "isk_estimado": float(r.isk),
+                "isk_comp":     float(r.isk_compressed),
+                "isk_repr":     float(r.isk_reprocessed),
             }
             for r in ore_rows
         ]

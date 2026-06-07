@@ -119,6 +119,7 @@ def _zkill_get(url, max_pages=5):
     """
     Descarga hasta max_pages de zkillboard. Cada pagina tiene max 200 entries.
     Devuelve lista de dicts [{killmail_id, zkb:{totalValue,...}}, ...].
+    404 = sin resultados para ese filtro (no es un error).
     """
     results = []
     for page in range(1, max_pages + 1):
@@ -128,7 +129,12 @@ def _zkill_get(url, max_pages=5):
             if r.status_code == 429:
                 time.sleep(10)
                 r = http_requests.get(paged, headers=ZKILL_HEADERS, timeout=20)
+            if r.status_code == 404:
+                break          # sin resultados para este filtro — es normal
             if r.status_code != 200:
+                logger.warning("zkill_get %s status=%s", paged, r.status_code)
+                break
+            if not r.text or not r.text.strip():
                 break
             data = r.json()
             if not data:
@@ -139,7 +145,7 @@ def _zkill_get(url, max_pages=5):
         except Exception as exc:
             logger.warning("zkill_get %s: %s", paged, exc)
             break
-        time.sleep(0.5)        # rate-limit suave
+        time.sleep(0.3)        # rate-limit suave
     return results
 
 
@@ -620,7 +626,8 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         logger.warning("koru fetch_pvp: sin personajes en corp")
         return 0
 
-    logger.info("koru fetch_pvp: %d chars x %d periodos", len(characters), len(periods))
+    logger.info("koru fetch_pvp: %d chars x %d periodos = %d calls estimadas",
+                len(characters), len(periods), len(characters) * len(periods) * 2)
 
     # aggregation: {(main_char_id, period) -> dict}
     agg = defaultdict(lambda: {
@@ -633,7 +640,9 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
     })
 
     total_calls = 0
-    for char in characters:
+    for idx, char in enumerate(characters):
+        if idx > 0 and idx % 50 == 0:
+            logger.info("koru fetch_pvp: progreso %d/%d chars", idx, len(characters))
         char_id    = char["char_id"]
         main_id    = char["main_char_id"]
         main_name  = char["main_char_name"]

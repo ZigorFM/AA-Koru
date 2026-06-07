@@ -757,6 +757,11 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                 "ships_lost":          data["ships_lost"],
                 "isk_destroyed":       round(data["isk_destroyed"], 2),
                 "isk_lost":            round(data["isk_lost"],      2),
+                "final_blows":         data["final_blows"],
+                "participations":      data["participations"],
+                "solo_kills":          data["solo_kills"],
+                "top_damage_kills":    data["top_damage_kills"],
+                "damage_dealt":        data["damage_dealt"],
             },
         )
         saved += 1

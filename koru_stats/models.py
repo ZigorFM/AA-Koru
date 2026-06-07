@@ -226,6 +226,13 @@ class CharacterMonthlyPvp(models.Model):
     isk_destroyed   = models.DecimalField(max_digits=20, decimal_places=2, default=0)
     isk_lost        = models.DecimalField(max_digits=20, decimal_places=2, default=0)
 
+    # Detalle de participación (desde ESI attackers[])
+    final_blows     = models.IntegerField(default=0)   # tiros de gracia
+    participations  = models.IntegerField(default=0)   # killmails donde aparece como atacante
+    solo_kills      = models.IntegerField(default=0)   # kills en solitario (zkb.solo)
+    top_damage_kills = models.IntegerField(default=0)  # kills donde hizo más daño (sin ser final blow)
+    damage_dealt    = models.BigIntegerField(default=0) # daño total infligido
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

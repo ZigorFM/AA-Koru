@@ -563,17 +563,37 @@ def dashboard(request):
     # ── Top PvP — desde CharacterMonthlyPvp ──
     top_pvp = []
     error_pvp = False
+    pvp_tend  = []
     try:
-        top_pvp = _summary_top_pvp(corp_ids, periodo_sel)
+        top_pvp  = _summary_top_pvp(corp_ids, periodo_sel)
+        pvp_tend = _summary_pvp_tendencias(corp_ids)
     except Exception as e:
         logger.error("koru_stats top_pvp: %s", e)
         error_pvp = True
 
-    # tendencias_bounties viene integrado en tendencias_mineria (CharacterMonthlySummary)
+    # ── KPI agregados corp ──
+    total_isk_mining   = sum(float(r.get("total_isk", 0) or 0) for r in top_mineros)
+    total_isk_bounties = sum(float(r.get("total_isk", 0) or 0) for r in top_bounties)
+    pvp_agg = CharacterMonthlyPvp.objects.filter(
+        period=periodo_sel, corporation_id__in=corp_ids
+    ).aggregate(
+        k=Sum("ships_destroyed"), d=Sum("ships_lost"),
+        id=Sum("isk_destroyed"),  il=Sum("isk_lost"),
+    )
+    total_pvp_kills = int(pvp_agg["k"] or 0)
+    total_pvp_deaths = int(pvp_agg["d"] or 0)
+    _pvp_id = float(pvp_agg["id"] or 0)
+    _pvp_il = float(pvp_agg["il"] or 0)
+    corp_pvp_eff = round(_pvp_id / (_pvp_id + _pvp_il) * 100, 1) if (_pvp_id + _pvp_il) else 0.0
+
+    # ── Tendencias combinadas ──
     periodos_tend = [r["period"] for r in tendencias_mineria]
     min_by_period  = {r["period"]: float(r["isk_mineria"]  or 0) for r in tendencias_mineria}
     bou_by_period  = {r["period"]: float(r["isk_bounties"] or 0) for r in tendencias_mineria}
     uni_by_period  = {r["period"]: int(r["unidades"]       or 0) for r in tendencias_mineria}
+    pvp_by_period  = {r["period"]: float(r["total_isk_destroyed"] or 0) for r in pvp_tend}
+    # unión de todos los períodos
+    all_periods = sorted(set(periodos_tend) | set(pvp_by_period.keys()))
 
     context = {
         "mes":               date(anio, mes, 1).strftime("%B %Y"),
@@ -587,6 +607,13 @@ def dashboard(request):
         "error_mineros":     error_mineros,
         "error_bounties":    error_bounties,
         "error_ore":         error_ore,
+        # KPI cards
+        "total_isk_mining":    total_isk_mining,
+        "total_isk_bounties":  total_isk_bounties,
+        "total_pvp_kills":     total_pvp_kills,
+        "total_pvp_deaths":    total_pvp_deaths,
+        "corp_pvp_eff":        corp_pvp_eff,
+        # Charts individuales
         "chart_mineros":  _to_json({
             "labels":    [r["nombre"] for r in top_mineros],
             "unidades":  [int(r["total_unidades"]) for r in top_mineros],
@@ -597,11 +624,12 @@ def dashboard(request):
         }),
         "chart_bounties": _to_json({"labels": [r["nombre"] for r in top_bounties], "data": [float(Decimal(str(r["total_isk"]))) for r in top_bounties]}),
         "chart_ore":      _to_json({"labels": [r["ore"] for r in top_ore_chart], "data": [float(r["isk_estimado"] or 0) for r in top_ore_chart]}),
-        "chart_tendencias": _to_json({
-            "labels":   periodos_tend,
-            "mineria":  [min_by_period.get(p, 0) for p in periodos_tend],
-            "bounties": [bou_by_period.get(p, 0) for p in periodos_tend],
-            "unidades": [uni_by_period.get(p, 0) for p in periodos_tend],
+        # Chart combinado tendencia (todos los períodos)
+        "chart_tendencia_combinada": _to_json({
+            "labels":   all_periods,
+            "mineria":  [min_by_period.get(p, 0) / 1e9  for p in all_periods],
+            "bounties": [bou_by_period.get(p, 0) / 1e9  for p in all_periods],
+            "pvp":      [pvp_by_period.get(p, 0) / 1e9  for p in all_periods],
         }),
         "top_pvp":     top_pvp,
         "error_pvp":   error_pvp,

@@ -10,7 +10,7 @@ from django.db import connection
 from django.db.models import F, Sum
 from django.shortcuts import render
 
-from .models import CharacterMonthlyOre, CharacterMonthlySummary, CharacterMonthlyPvp, TrackedCorporation
+from .models import CharacterMonthlyOre, CharacterMonthlySummary, CharacterMonthlyPvp, CharacterKillRecord, TrackedCorporation
 
 logger = logging.getLogger(__name__)
 
@@ -695,6 +695,24 @@ def mi_dashboard(request):
         logger.error("koru_stats pvp_personal: %s", e)
         error_pvp_personal = True
 
+    pvp_kills  = []
+    pvp_losses = []
+    try:
+        pvp_kills = list(
+            CharacterKillRecord.objects
+            .filter(main_character_id=main.character_id, period=periodo_sel, is_loss=False)
+            .order_by("-kill_date", "-killmail_id")
+            .values("killmail_id", "ship_type_id", "value_isk", "kill_date", "final_blow", "solo")
+        )
+        pvp_losses = list(
+            CharacterKillRecord.objects
+            .filter(main_character_id=main.character_id, period=periodo_sel, is_loss=True)
+            .order_by("-kill_date", "-killmail_id")
+            .values("killmail_id", "ship_type_id", "value_isk", "kill_date")
+        )
+    except Exception as e:
+        logger.error("koru_stats kill_records: %s", e)
+
     mining_sistemas, bounties_sistemas = [], []
     error_mining_sis = error_bounties_sis = False
     bounties_desglose = {"bounties_directos": 0, "ess_pagos": 0, "total": 0}
@@ -868,6 +886,8 @@ def mi_dashboard(request):
         "chart_gastos_p":        _to_json({"labels": [r["cat"] for r in gastos_donut],   "data": [r["total"] for r in gastos_donut]}),
         "pvp_personal":        pvp_personal,
         "pvp_tendencia":       pvp_tendencia,
+        "pvp_kills":           pvp_kills,
+        "pvp_losses":          pvp_losses,
         "error_pvp_personal":  error_pvp_personal,
         "chart_pvp_personal":  _to_json({
             "labels":          [r["period"] for r in pvp_tendencia],

@@ -36,6 +36,7 @@ from .models import (
     CharacterMonthlyOre,
     CharacterMonthlySummary,
     CharacterMonthlyPvp,
+    CharacterKillRecord,
     OreMarketPrice,
     TrackedCorporation,
 )
@@ -713,6 +714,9 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                     if period not in periods:
                         continue            # fuera del rango objetivo pero no demasiado viejo
 
+                    km_date = km_time[:10] if km_time else None  # "2026-06-07"
+                    victim_ship = esi.get("victim", {}).get("ship_type_id", 0)
+
                     if kind == "losses":
                         victim  = esi.get("victim", {})
                         char_id = victim.get("character_id")
@@ -723,6 +727,22 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                             agg[key]["corporation_id"] = c["corporation_id"]
                             agg[key]["ships_lost"]  += 1
                             agg[key]["isk_lost"]    += value
+                            # registro individual — nave propia (víctima)
+                            own_ship = victim.get("ship_type_id", 0)
+                            CharacterKillRecord.objects.update_or_create(
+                                main_character_id=c["main_char_id"],
+                                killmail_id=killmail_id,
+                                defaults=dict(
+                                    main_character_name=c["main_char_name"],
+                                    period=period,
+                                    is_loss=True,
+                                    ship_type_id=own_ship,
+                                    value_isk=value,
+                                    kill_date=km_date,
+                                    final_blow=False,
+                                    solo=False,
+                                ),
+                            )
 
                     else:
                         attackers  = esi.get("attackers", [])
@@ -739,7 +759,8 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                             agg[key]["participations"]  += 1
                             dmg = att.get("damage_done", 0)
                             agg[key]["damage_dealt"]    += dmg
-                            if att.get("final_blow"):
+                            got_final = att.get("final_blow", False)
+                            if got_final:
                                 agg[key]["ships_destroyed"] += 1
                                 agg[key]["isk_destroyed"]   += value
                                 agg[key]["final_blows"]     += 1
@@ -747,6 +768,21 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                                     agg[key]["solo_kills"]  += 1
                             elif dmg == max_dmg and max_dmg > 0:
                                 agg[key]["top_damage_kills"] += 1
+                            # registro individual — nave víctima
+                            CharacterKillRecord.objects.update_or_create(
+                                main_character_id=c["main_char_id"],
+                                killmail_id=killmail_id,
+                                defaults=dict(
+                                    main_character_name=c["main_char_name"],
+                                    period=period,
+                                    is_loss=False,
+                                    ship_type_id=victim_ship,
+                                    value_isk=value,
+                                    kill_date=km_date,
+                                    final_blow=got_final,
+                                    solo=is_solo and got_final,
+                                ),
+                            )
 
                 if all_too_old:
                     done = True

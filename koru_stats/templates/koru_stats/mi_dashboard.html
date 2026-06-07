@@ -586,6 +586,86 @@
         </div>
         {% endif %}
 
+        {# ── Tabs Kills / Losses ── #}
+        {% if pvp_kills or pvp_losses %}
+        <div class="row mt-3">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header p-0">
+                        <ul class="nav nav-tabs card-header-tabs" id="killLossTabs" role="tablist">
+                            <li class="nav-item">
+                                <button class="nav-link active text-success" data-bs-toggle="tab" data-bs-target="#tabKills" type="button">
+                                    <i class="fas fa-skull-crossbones me-1"></i>Kills
+                                    <span class="badge bg-success ms-1">{{ pvp_kills|length }}</span>
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link text-danger" data-bs-toggle="tab" data-bs-target="#tabLosses" type="button">
+                                    <i class="fas fa-skull me-1"></i>Losses
+                                    <span class="badge bg-danger ms-1">{{ pvp_losses|length }}</span>
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="tab-content">
+                            <div class="tab-pane fade show active" id="tabKills" role="tabpanel">
+                                <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+                                    <table class="table table-sm table-hover mb-0">
+                                        <thead class="sticky-top" style="background:var(--bs-dark,#1a1a2e)">
+                                            <tr><th>Nave</th><th>Valor ISK</th><th>Fecha</th><th class="text-center">FB</th><th class="text-center">Solo</th><th></th></tr>
+                                        </thead>
+                                        <tbody>
+                                        {% for k in pvp_kills %}
+                                        <tr>
+                                            <td>
+                                                <img src="https://images.evetech.net/types/{{ k.ship_type_id }}/render?size=32" width="32" height="32" class="rounded me-2" onerror="this.style.display='none'">
+                                                <span class="text-muted small">{{ k.ship_type_id }}</span>
+                                            </td>
+                                            <td class="text-success fw-bold">{{ k.value_isk|rkisk }}</td>
+                                            <td class="text-muted small">{{ k.kill_date }}</td>
+                                            <td class="text-center">{% if k.final_blow %}<i class="fas fa-crosshairs text-warning"></i>{% endif %}</td>
+                                            <td class="text-center">{% if k.solo %}<i class="fas fa-user text-info"></i>{% endif %}</td>
+                                            <td><a href="https://zkillboard.com/kill/{{ k.killmail_id }}/" target="_blank" class="btn btn-sm btn-outline-secondary py-0 px-1"><i class="fas fa-external-link-alt"></i></a></td>
+                                        </tr>
+                                        {% empty %}
+                                        <tr><td colspan="6" class="text-muted text-center py-3">Sin kills este mes</td></tr>
+                                        {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="tab-pane fade" id="tabLosses" role="tabpanel">
+                                <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+                                    <table class="table table-sm table-hover mb-0">
+                                        <thead class="sticky-top" style="background:var(--bs-dark,#1a1a2e)">
+                                            <tr><th>Nave perdida</th><th>Valor ISK</th><th>Fecha</th><th></th></tr>
+                                        </thead>
+                                        <tbody>
+                                        {% for l in pvp_losses %}
+                                        <tr>
+                                            <td>
+                                                <img src="https://images.evetech.net/types/{{ l.ship_type_id }}/render?size=32" width="32" height="32" class="rounded me-2" onerror="this.style.display='none'">
+                                                <span class="text-muted small">{{ l.ship_type_id }}</span>
+                                            </td>
+                                            <td class="text-danger fw-bold">{{ l.value_isk|rkisk }}</td>
+                                            <td class="text-muted small">{{ l.kill_date }}</td>
+                                            <td><a href="https://zkillboard.com/kill/{{ l.killmail_id }}/" target="_blank" class="btn btn-sm btn-outline-secondary py-0 px-1"><i class="fas fa-external-link-alt"></i></a></td>
+                                        </tr>
+                                        {% empty %}
+                                        <tr><td colspan="4" class="text-muted text-center py-3">Sin losses este mes</td></tr>
+                                        {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {% endif %}{# /pvp_personal #}
     </div>{# /tabPvP #}
 

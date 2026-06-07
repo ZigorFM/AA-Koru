@@ -265,3 +265,39 @@ class CharacterMonthlyPvp(models.Model):
         if not self.ships_lost:
             return float(self.ships_destroyed)
         return float(self.ships_destroyed / self.ships_lost)
+
+
+class CharacterKillRecord(models.Model):
+    """Registro individual de killmail — kills y losses por personaje."""
+
+    main_character_id   = models.BigIntegerField(db_index=True)
+    main_character_name = models.CharField(max_length=255, default="")
+    killmail_id         = models.BigIntegerField()
+    period              = models.CharField(max_length=7, db_index=True)  # "2026-05"
+    is_loss             = models.BooleanField(default=False)
+    ship_type_id        = models.IntegerField(default=0)   # nave víctima (kills) o nave propia (losses)
+    value_isk           = models.FloatField(default=0.0)
+    kill_date           = models.DateField(null=True, blank=True)
+    final_blow          = models.BooleanField(default=False)
+    solo                = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name        = "Registro killmail"
+        verbose_name_plural = "Registros killmail"
+        unique_together = ("main_character_id", "killmail_id")
+        indexes = [
+            models.Index(fields=["main_character_id", "period", "is_loss"],
+                         name="koru_killrec_char_period_loss"),
+        ]
+
+    def __str__(self):
+        t = "Loss" if self.is_loss else "Kill"
+        return f"{self.main_character_name} | {t} | {self.killmail_id}"
+
+    @property
+    def zkill_url(self):
+        return f"https://zkillboard.com/kill/{self.killmail_id}/"
+
+    @property
+    def ship_image_url(self):
+        return f"https://images.evetech.net/types/{self.ship_type_id}/render?size=64"

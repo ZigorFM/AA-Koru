@@ -22,6 +22,7 @@ POBLACION INICIAL — ejecuta esto UNA VEZ en el shell de Django:
 """
 
 import logging
+import traceback
 from datetime import datetime
 
 import requests as http_requests
@@ -610,7 +611,7 @@ def run_koru_aggregations(full=False):
     try:
         n_prices = update_ore_prices()
     except Exception as exc:
-        logger.error("koru run_koru_aggregations: update_ore_prices fallo: %s", exc)
+        logger.error("koru run_koru_aggregations: update_ore_prices fallo: %s\n%s", exc, traceback.format_exc())
         n_prices = 0
 
     n_ore     = aggregate_character_monthly_ore(full=full)

@@ -620,7 +620,7 @@
                                         <tr>
                                             <td>
                                                 <img src="https://images.evetech.net/types/{{ k.ship_type_id }}/render?size=32" width="32" height="32" class="rounded me-2" onerror="this.style.display='none'">
-                                                <span class="text-muted small">{{ k.ship_type_id }}</span>
+                                                <span class="small">{{ k.ship_name|default:k.ship_type_id }}</span>
                                             </td>
                                             <td class="text-success fw-bold">{{ k.value_isk|rkisk }}</td>
                                             <td class="text-muted small">{{ k.kill_date }}</td>
@@ -646,7 +646,7 @@
                                         <tr>
                                             <td>
                                                 <img src="https://images.evetech.net/types/{{ l.ship_type_id }}/render?size=32" width="32" height="32" class="rounded me-2" onerror="this.style.display='none'">
-                                                <span class="text-muted small">{{ l.ship_type_id }}</span>
+                                                <span class="small">{{ l.ship_name|default:l.ship_type_id }}</span>
                                             </td>
                                             <td class="text-danger fw-bold">{{ l.value_isk|rkisk }}</td>
                                             <td class="text-muted small">{{ l.kill_date }}</td>

@@ -276,6 +276,7 @@ class CharacterKillRecord(models.Model):
     period              = models.CharField(max_length=7, db_index=True)  # "2026-05"
     is_loss             = models.BooleanField(default=False)
     ship_type_id        = models.IntegerField(default=0)   # nave víctima (kills) o nave propia (losses)
+    ship_name           = models.CharField(max_length=255, default="")
     value_isk           = models.FloatField(default=0.0)
     kill_date           = models.DateField(null=True, blank=True)
     final_blow          = models.BooleanField(default=False)

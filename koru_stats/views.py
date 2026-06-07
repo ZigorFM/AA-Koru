@@ -730,13 +730,13 @@ def mi_dashboard(request):
             CharacterKillRecord.objects
             .filter(main_character_id=main.character_id, period=periodo_sel, is_loss=False)
             .order_by("-kill_date", "-killmail_id")
-            .values("killmail_id", "ship_type_id", "value_isk", "kill_date", "final_blow", "solo")
+            .values("killmail_id", "ship_type_id", "ship_name", "value_isk", "kill_date", "final_blow", "solo")
         )
         pvp_losses = list(
             CharacterKillRecord.objects
             .filter(main_character_id=main.character_id, period=periodo_sel, is_loss=True)
             .order_by("-kill_date", "-killmail_id")
-            .values("killmail_id", "ship_type_id", "value_isk", "kill_date")
+            .values("killmail_id", "ship_type_id", "ship_name", "value_isk", "kill_date")
         )
     except Exception as e:
         logger.error("koru_stats kill_records: %s", e)

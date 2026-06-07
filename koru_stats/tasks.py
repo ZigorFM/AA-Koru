@@ -612,6 +612,26 @@ def _esi_killmail(killmail_id, kz_hash):
     return None
 
 
+def _esi_type_name(type_id, cache={}):
+    """Devuelve el nombre del tipo EVE. Cache en memoria durante la tarea."""
+    if type_id in cache:
+        return cache[type_id]
+    if not type_id:
+        return ""
+    try:
+        url = f"{ESI_BASE}/universe/types/{type_id}/?language=en"
+        r = http_requests.get(url, headers=ESI_HEADERS, timeout=10)
+        if r.status_code == 200:
+            name = r.json().get("name", "")
+            cache[type_id] = name
+            return name
+    except Exception as exc:
+        logger.warning("ESI type %s: %s", type_id, exc)
+    cache[type_id] = ""
+    return ""
+
+
+
 @shared_task
 def fetch_pvp_from_zkillboard(periods=None, full=False):
     """
@@ -737,6 +757,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                                     period=period,
                                     is_loss=True,
                                     ship_type_id=own_ship,
+                                    ship_name=_esi_type_name(own_ship),
                                     value_isk=value,
                                     kill_date=km_date,
                                     final_blow=False,
@@ -777,6 +798,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                                     period=period,
                                     is_loss=False,
                                     ship_type_id=victim_ship,
+                                    ship_name=_esi_type_name(victim_ship),
                                     value_isk=value,
                                     kill_date=km_date,
                                     final_blow=got_final,

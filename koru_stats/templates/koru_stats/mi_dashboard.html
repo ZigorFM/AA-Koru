@@ -504,10 +504,20 @@
     const oreRawAnt     = parseFloat("{{ mining_isk_ore_raw_ant|floatformat:2 }}".replace(",","."))  || 0;
     const bountiesAnt   = parseFloat("{{ total_bounties_ant|floatformat:2 }}".replace(",","."))     || 0;
 
+    const _todayY = new Date().getFullYear();
+    const _todayM = new Date().getMonth() + 1;
+    const _periodoSel = "{{ periodo_sel }}";   // "YYYY-MM"
+    const _selY   = parseInt(_periodoSel.slice(0,4)) || _todayY;
+    const _selM   = parseInt(_periodoSel.slice(5,7)) || _todayM;
+    const _isCurrent = (_selY === _todayY && _selM === _todayM);
+
     function fmtDelta(current, previous, invertColors=false) {
         if (!previous) return '';
         const pct = ((current - previous) / Math.abs(previous)) * 100;
         const up  = pct >= 0;
+        if (_isCurrent) {
+            return `<span style="color:#6c757d" title="Mes en curso — comparación parcial">${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}% <small style="font-size:9px">(en curso)</small></span>`;
+        }
         const goodColor = invertColors ? (up ? '#ef4444' : '#10b981') : (up ? '#10b981' : '#ef4444');
         return `<span style="color:${goodColor}">${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%</span>`;
     }

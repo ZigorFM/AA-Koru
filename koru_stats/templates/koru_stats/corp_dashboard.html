@@ -487,10 +487,22 @@
     const balance          = totalIngresos - totalGastos;
     const balanceAnt       = totalIngresosAnt - totalGastosAnt;
 
+    // Detectar si el período mostrado es el mes actual (comparación parcial)
+    const _todayY = new Date().getFullYear();
+    const _todayM = new Date().getMonth() + 1;
+    const _periodoSel = "{{ periodo_sel }}";   // "YYYY-MM"
+    const _selY   = parseInt(_periodoSel.slice(0,4)) || _todayY;
+    const _selM   = parseInt(_periodoSel.slice(5,7)) || _todayM;
+    const _isCurrent = (_selY === _todayY && _selM === _todayM);
+
     function fmtDelta(current, previous, invertColors) {
         if (!previous) return '';
         const pct = ((current - previous) / Math.abs(previous)) * 100;
         const up  = pct >= 0;
+        if (_isCurrent) {
+            const arrow = up ? '▲' : '▼';
+            return `<span style="color:#6c757d" title="Mes en curso — comparación parcial">${arrow} ${Math.abs(pct).toFixed(1)}% <small style="font-size:9px">(en curso)</small></span>`;
+        }
         const goodColor = invertColors ? (up ? '#ef4444' : '#10b981') : (up ? '#10b981' : '#ef4444');
         const arrow = up ? '▲' : '▼';
         return `<span style="color:${goodColor}">${arrow} ${Math.abs(pct).toFixed(1)}%</span>`;

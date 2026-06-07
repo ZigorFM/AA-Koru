@@ -127,8 +127,12 @@ def _zkill_get(url, max_pages=5):
         try:
             r = http_requests.get(paged, headers=ZKILL_HEADERS, timeout=20)
             if r.status_code == 429:
-                time.sleep(10)
+                logger.warning("zkill 429 — esperando 60s antes de reintentar")
+                time.sleep(60)
                 r = http_requests.get(paged, headers=ZKILL_HEADERS, timeout=20)
+                if r.status_code == 429:
+                    logger.warning("zkill 429 persistente — abortando esta URL")
+                    break
             if r.status_code == 404:
                 break          # sin resultados para este filtro — es normal
             if r.status_code != 200:

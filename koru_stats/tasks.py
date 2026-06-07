@@ -10,11 +10,10 @@ SCHEDULE — añade esto a tu local.py:
     from celery.schedules import crontab
     CELERYBEAT_SCHEDULE['koru-daily-aggregations'] = {
         'task': 'koru_stats.tasks.run_koru_aggregations',
-        'schedule': crontab(hour=3, minute=0),   # cada día a las 3:00 AM
+        'schedule': crontab(hour=3, minute=0),
     }
 
-POBLACIÓN INICIAL — ejecuta esto UNA VEZ en el shell de Django para
-rellenar los datos históricos (puede tardar varios minutos):
+POBLACIÓN INICIAL — ejecuta esto UNA VEZ en el shell de Django:
 
     from koru_stats.tasks import run_koru_aggregations
     run_koru_aggregations(full=True)
@@ -59,24 +58,33 @@ def _default_periods(n=2):
 
 
 def _all_periods_with_data():
-    """Todos los períodos con datos en corptools."""
+    """
+    Todos los períodos YYYY-MM con datos en corptools.
+    Sin parámetros → usamos %Y-%m directamente (PyMySQL no escapa sin args).
+    """
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
                 SELECT DISTINCT periodo FROM (
-                    SELECT DATE_FORMAT(date, '%%Y-%%m') AS periodo
+                    SELECT DATE_FORMAT(date, '%Y-%m') AS periodo
                     FROM corptools_characterminingledger
                     UNION
-                    SELECT DATE_FORMAT(date, '%%Y-%%m') AS periodo
+                    SELECT DATE_FORMAT(date, '%Y-%m') AS periodo
                     FROM corptools_characterwalletjournalentry
                     WHERE ref_type IN ('bounty_prizes', 'ess_escrow_transfer')
                 ) t
                 ORDER BY periodo ASC
             """)
             return [row[0] for row in cursor.fetchall()]
-    except Exception as e:
-        logger.error("koru _all_periods_with_data: %s", e)
+    except Exception as exc:
+        logger.error("koru _all_periods_with_data: %s", exc)
         return []
+
+
+def _period_to_yyyymm(period):
+    """'2026-05' → 202605 (int). Usado para comparar sin DATE_FORMAT + params."""
+    anio, mes = period.split("-")
+    return int(anio) * 100 + int(mes)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +98,7 @@ def aggregate_character_monthly_summary(periods=None, full=False):
 
     Args:
         periods: Lista de strings 'YYYY-MM'. Si None, usa los últimos 2 meses.
-        full:    Si True, agrega TODOS los períodos disponibles (población inicial).
+        full:    Si True, agrega TODOS los períodos disponibles.
     """
     corp_ids = _get_active_corp_ids()
     if not corp_ids:
@@ -99,11 +107,16 @@ def aggregate_character_monthly_summary(periods=None, full=False):
 
     periods = _all_periods_with_data() if full else (periods or _default_periods())
     if not periods:
+        logger.warning("koru aggregate_summary: no hay períodos con datos")
         return 0
 
+    # Convertimos períodos a enteros YYYYMM para evitar DATE_FORMAT con params
+    # (DATE_FORMAT usa %, que conflicta con los placeholders %s de PyMySQL)
+    yyyymm_list = [_period_to_yyyymm(p) for p in periods]
+
     ph_corps   = ",".join(["%s"] * len(corp_ids))
-    ph_periods = ",".join(["%s"] * len(periods))
-    params     = corp_ids + periods
+    ph_periods = ",".join(["%s"] * len(yyyymm_list))
+    params     = corp_ids + yyyymm_list
 
     # ── Mining ──────────────────────────────────────────────────────────────
     sql_mining = f"""
@@ -124,7 +137,7 @@ def aggregate_character_monthly_summary(periods=None, full=False):
         JOIN eve_sde_itemtype                  it      ON it.id           = ml.type_name_id
         LEFT JOIN eveuniverse_evemarketprice   emp     ON emp.eve_type_id = ml.type_name_id
         WHERE ec.corporation_id IN ({ph_corps})
-          AND DATE_FORMAT(ml.date, '%%Y-%%m') IN ({ph_periods})
+          AND (YEAR(ml.date) * 100 + MONTH(ml.date)) IN ({ph_periods})
         GROUP BY main_ec.character_id, main_ec.character_name,
                  ec.corporation_id, DATE_FORMAT(ml.date, '%%Y-%%m')
     """
@@ -145,7 +158,7 @@ def aggregate_character_monthly_summary(periods=None, full=False):
         WHERE wj.ref_type IN ('bounty_prizes', 'ess_escrow_transfer')
           AND wj.amount > 0
           AND ec.corporation_id IN ({ph_corps})
-          AND DATE_FORMAT(wj.date, '%%Y-%%m') IN ({ph_periods})
+          AND (YEAR(wj.date) * 100 + MONTH(wj.date)) IN ({ph_periods})
         GROUP BY main_ec.character_id, DATE_FORMAT(wj.date, '%%Y-%%m')
     """
 
@@ -179,7 +192,7 @@ def aggregate_character_monthly_summary(periods=None, full=False):
             )
 
         logger.info(
-            "koru aggregate_summary: %d registros actualizados, %d períodos",
+            "koru aggregate_summary: %d registros, %d períodos",
             len(all_keys), len(periods),
         )
         return len(all_keys)
@@ -206,8 +219,10 @@ def aggregate_character_monthly_ore(periods=None, full=False):
     if not periods:
         return 0
 
+    yyyymm_list = [_period_to_yyyymm(p) for p in periods]
+
     ph_corps   = ",".join(["%s"] * len(corp_ids))
-    ph_periods = ",".join(["%s"] * len(periods))
+    ph_periods = ",".join(["%s"] * len(yyyymm_list))
 
     sql = f"""
         SELECT
@@ -228,14 +243,14 @@ def aggregate_character_monthly_ore(periods=None, full=False):
         JOIN eve_sde_itemtype                  it      ON it.id           = ml.type_name_id
         LEFT JOIN eveuniverse_evemarketprice   emp     ON emp.eve_type_id = ml.type_name_id
         WHERE ec.corporation_id IN ({ph_corps})
-          AND DATE_FORMAT(ml.date, '%%Y-%%m') IN ({ph_periods})
+          AND (YEAR(ml.date) * 100 + MONTH(ml.date)) IN ({ph_periods})
         GROUP BY main_ec.character_id, ec.corporation_id,
                  DATE_FORMAT(ml.date, '%%Y-%%m'), it.id, it.name
     """
 
     try:
         with connection.cursor() as cursor:
-            cursor.execute(sql, corp_ids + periods)
+            cursor.execute(sql, corp_ids + yyyymm_list)
             rows = cursor.fetchall()
 
         for row in rows:
@@ -253,7 +268,7 @@ def aggregate_character_monthly_ore(periods=None, full=False):
             )
 
         logger.info(
-            "koru aggregate_ore: %d registros actualizados, %d períodos",
+            "koru aggregate_ore: %d registros, %d períodos",
             len(rows), len(periods),
         )
         return len(rows)
@@ -273,7 +288,7 @@ def run_koru_aggregations(full=False):
     Ejecuta todas las agregaciones en secuencia.
 
     Uso normal (diario): run_koru_aggregations.delay()
-    Población inicial:   run_koru_aggregations(full=True)   ← sin .delay()
+    Población inicial:   run_koru_aggregations(full=True)
     """
     logger.info("koru run_koru_aggregations START (full=%s)", full)
     n_summary = aggregate_character_monthly_summary(full=full)

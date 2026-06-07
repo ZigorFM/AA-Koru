@@ -5,7 +5,7 @@ ORDEN DE EJECUCION (importante):
   1. update_ore_prices()               — fetch precios desde Fuzzwork API
   2. aggregate_character_monthly_ore() — ore por char/mes, usando OreMarketPrice
   3. aggregate_character_monthly_summary() — resumen (ISK viene de CharacterMonthlyOre)
-  4. aggregate_character_monthly_pvp() — PvP desde aastatistics_zkillmonth
+  4. fetch_pvp_from_zkillboard()        — PvP desde zKillboard API (zkb.totalValue)
 
 SCHEDULE — anade esto a tu local.py:
 
@@ -22,6 +22,7 @@ POBLACION INICIAL — ejecuta esto UNA VEZ en el shell de Django:
 """
 
 import logging
+import time
 import traceback
 from datetime import datetime
 
@@ -98,17 +99,79 @@ def _all_periods_with_data():
 
 
 def _all_pvp_periods():
-    """Todos los periodos YYYY-MM disponibles en aastatistics_zkillmonth."""
+    """Periodos YYYY-MM: usa _all_periods_with_data como fallback (aastatistics eliminado)."""
+    return _all_periods_with_data()
+
+
+# ---------------------------------------------------------------------------
+# Helpers zkillboard API
+# ---------------------------------------------------------------------------
+
+ZKILL_BASE    = "https://zkillboard.com/api"
+ZKILL_HEADERS = {
+    "Accept-Encoding": "gzip",
+    "User-Agent":      "Rekium koru_stats/1.0 contact:sietehierros@gmail.com",
+}
+
+
+def _zkill_get(url, max_pages=5):
+    """
+    Descarga hasta max_pages de zkillboard. Cada pagina tiene max 200 entries.
+    Devuelve lista de dicts [{killmail_id, zkb:{totalValue,...}}, ...].
+    """
+    results = []
+    for page in range(1, max_pages + 1):
+        paged = f"{url}page/{page}/"
+        try:
+            r = http_requests.get(paged, headers=ZKILL_HEADERS, timeout=20)
+            if r.status_code == 429:
+                time.sleep(10)
+                r = http_requests.get(paged, headers=ZKILL_HEADERS, timeout=20)
+            if r.status_code != 200:
+                break
+            data = r.json()
+            if not data:
+                break
+            results.extend(data)
+            if len(data) < 200:
+                break          # ultima pagina
+        except Exception as exc:
+            logger.warning("zkill_get %s: %s", paged, exc)
+            break
+        time.sleep(0.5)        # rate-limit suave
+    return results
+
+
+def _get_corp_characters(corp_ids):
+    """
+    Devuelve lista de dicts:
+      {char_id, main_char_id, main_char_name, corporation_id}
+    Solo personajes de miembros activos en las corps trackeadas.
+    """
+    if not corp_ids:
+        return []
+    ph = ",".join(["%s"] * len(corp_ids))
+    sql = (
+        "SELECT ec.character_id, main_ec.character_id, main_ec.character_name, ec.corporation_id"
+        " FROM eveonline_evecharacter          ec"
+        " JOIN authentication_characterownership co      ON co.character_id = ec.id"
+        " JOIN authentication_userprofile        up      ON up.user_id      = co.user_id"
+        " JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id"
+        " WHERE ec.corporation_id IN (" + ph + ")"
+        " GROUP BY ec.character_id, main_ec.character_id, main_ec.character_name, ec.corporation_id"
+    )
     try:
         with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT DISTINCT CONCAT(year, '-', LPAD(month, 2, '0')) AS periodo
-                FROM aastatistics_zkillmonth
-                ORDER BY periodo ASC
-            """)
-            return [row[0] for row in cursor.fetchall()]
+            cursor.execute(sql, corp_ids)
+            return [
+                {"char_id":        row[0],
+                 "main_char_id":   row[1],
+                 "main_char_name": row[2],
+                 "corporation_id": row[3]}
+                for row in cursor.fetchall()
+            ]
     except Exception as exc:
-        logger.error("koru _all_pvp_periods: %s", exc)
+        logger.error("koru _get_corp_characters: %s", exc)
         return []
 
 
@@ -518,78 +581,122 @@ def aggregate_character_monthly_summary(periods=None, full=False):
 
 
 # ---------------------------------------------------------------------------
-# Tarea 3 — CharacterMonthlyPvp (desde aastatistics_zkillmonth)
+# Tarea 3 — CharacterMonthlyPvp (desde zKillboard API directa)
 # ---------------------------------------------------------------------------
 
 @shared_task
-def aggregate_character_monthly_pvp(periods=None, full=False):
+def fetch_pvp_from_zkillboard(periods=None, full=False):
     """
-    Agrega estadisticas PvP mensuales por personaje principal.
-    Fuente: aastatistics_zkillmonth (actualizado por aastatistics).
+    Descarga kills/losses de zKillboard por personaje y agrupa en CharacterMonthlyPvp.
+
+    Estrategia:
+    - Por cada personaje de miembro activo: query zkill con filtro year/month
+    - kills:  count = n. killmails, isk_destroyed = sum zkb.totalValue
+    - losses: count = n. killmails, isk_lost      = sum zkb.totalValue
+    - Agrupa por main_character_id + period y hace update_or_create
+    - No necesita ESI — zkb.totalValue ya contiene el ISK correcto
+
+    Llamar con full=True para poblar historico completo (lento, ~1 peticion/char/mes).
     """
+    from collections import defaultdict
+
     corp_ids = _get_active_corp_ids()
     if not corp_ids:
+        logger.warning("koru fetch_pvp: sin corps activas")
         return 0
 
     if full:
-        periods = _all_pvp_periods()
+        periods = _all_periods_with_data() or _default_periods(6)
     else:
-        periods = periods or _default_periods()
+        periods = periods or _default_periods(2)
 
     if not periods:
-        logger.warning("koru aggregate_pvp: no hay periodos disponibles")
+        logger.warning("koru fetch_pvp: sin periodos")
         return 0
 
-    yyyymm_list = [_period_to_yyyymm(p) for p in periods]
-    ph_corps    = ",".join(["%s"] * len(corp_ids))
-    ph_periods  = ",".join(["%s"] * len(yyyymm_list))
-    params      = corp_ids + yyyymm_list
+    characters = _get_corp_characters(corp_ids)
+    if not characters:
+        logger.warning("koru fetch_pvp: sin personajes en corp")
+        return 0
 
-    sql = (
-        "SELECT"
-        "    main_ec.character_id                           AS main_character_id,"
-        "    main_ec.character_name                         AS main_character_name,"
-        "    ec.corporation_id,"
-        "    CONCAT(zk.year, '-', LPAD(zk.month, 2, '0')) AS period,"
-        "    SUM(zk.ships_destroyed)                       AS ships_destroyed,"
-        "    SUM(zk.ships_lost)                            AS ships_lost,"
-        "    SUM(zk.isk_destroyed)                         AS isk_destroyed,"
-        "    SUM(zk.isk_lost)                              AS isk_lost"
-        " FROM aastatistics_zkillmonth zk"
-        " JOIN eveonline_evecharacter            ec      ON ec.character_id = zk.char_id"
-        " JOIN authentication_characterownership co      ON co.character_id = ec.id"
-        " JOIN authentication_userprofile        up      ON up.user_id      = co.user_id"
-        " JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id"
-        " WHERE ec.corporation_id IN (" + ph_corps + ")"
-        " AND (zk.year * 100 + zk.month) IN (" + ph_periods + ")"
-        " GROUP BY main_ec.character_id, main_ec.character_name, ec.corporation_id, period"
+    logger.info("koru fetch_pvp: %d chars x %d periodos", len(characters), len(periods))
+
+    # aggregation: {(main_char_id, period) -> dict}
+    agg = defaultdict(lambda: {
+        "main_char_name": "",
+        "corporation_id": 0,
+        "ships_destroyed": 0,
+        "ships_lost":      0,
+        "isk_destroyed":   0.0,
+        "isk_lost":        0.0,
+    })
+
+    total_calls = 0
+    for char in characters:
+        char_id    = char["char_id"]
+        main_id    = char["main_char_id"]
+        main_name  = char["main_char_name"]
+        corp_id    = char["corporation_id"]
+
+        for period in periods:
+            anio, mes = period.split("-")
+
+            # ── Kills ──
+            url_kills = f"{ZKILL_BASE}/kills/characterID/{char_id}/year/{anio}/month/{mes}/"
+            kills = _zkill_get(url_kills)
+            total_calls += 1
+            if kills:
+                key = (main_id, period)
+                agg[key]["main_char_name"] = main_name
+                agg[key]["corporation_id"] = corp_id
+                agg[key]["ships_destroyed"] += len(kills)
+                agg[key]["isk_destroyed"]   += sum(
+                    float(k.get("zkb", {}).get("totalValue", 0) or 0)
+                    for k in kills
+                )
+
+            # ── Losses ──
+            url_losses = f"{ZKILL_BASE}/losses/characterID/{char_id}/year/{anio}/month/{mes}/"
+            losses = _zkill_get(url_losses)
+            total_calls += 1
+            if losses:
+                key = (main_id, period)
+                agg[key]["main_char_name"] = main_name
+                agg[key]["corporation_id"] = corp_id
+                agg[key]["ships_lost"] += len(losses)
+                agg[key]["isk_lost"]   += sum(
+                    float(l.get("zkb", {}).get("totalValue", 0) or 0)
+                    for l in losses
+                )
+
+    # ── Persistir ──
+    saved = 0
+    for (main_char_id, period), data in agg.items():
+        if not data["main_char_name"]:
+            continue
+        CharacterMonthlyPvp.objects.update_or_create(
+            main_character_id=main_char_id,
+            period=period,
+            defaults={
+                "main_character_name": data["main_char_name"],
+                "corporation_id":      data["corporation_id"],
+                "ships_destroyed":     data["ships_destroyed"],
+                "ships_lost":          data["ships_lost"],
+                "isk_destroyed":       round(data["isk_destroyed"], 2),
+                "isk_lost":            round(data["isk_lost"],      2),
+            },
+        )
+        saved += 1
+
+    logger.info(
+        "koru fetch_pvp: %d registros guardados, %d calls zkill, %d periodos",
+        saved, total_calls, len(periods),
     )
+    return saved
 
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
 
-        for row in rows:
-            CharacterMonthlyPvp.objects.update_or_create(
-                main_character_id=row[0],
-                period=row[3],
-                defaults={
-                    "main_character_name": row[1],
-                    "corporation_id":      row[2],
-                    "ships_destroyed":     int(row[4] or 0),
-                    "ships_lost":          int(row[5] or 0),
-                    "isk_destroyed":       row[6] or 0,
-                    "isk_lost":            row[7] or 0,
-                },
-            )
-
-        logger.info("koru aggregate_pvp: %d registros, %d periodos", len(rows), len(periods))
-        return len(rows)
-
-    except Exception as exc:
-        logger.error("koru aggregate_pvp error: %s", exc)
-        raise
+# Alias para compatibilidad con run_koru_aggregations
+aggregate_character_monthly_pvp = fetch_pvp_from_zkillboard
 
 
 # ---------------------------------------------------------------------------
@@ -603,7 +710,7 @@ def run_koru_aggregations(full=False):
       1. update_ore_prices   — fetch Fuzzwork
       2. aggregate_ore       — ore por char/mes con los 3 ISK
       3. aggregate_summary   — resumen (ISK desde CharacterMonthlyOre)
-      4. aggregate_pvp       — PvP desde aastatistics_zkillmonth
+      4. fetch_pvp           — PvP desde zKillboard API
 
     Uso normal (diario): run_koru_aggregations.delay()
     Poblacion inicial:   run_koru_aggregations(full=True)

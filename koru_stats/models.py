@@ -118,13 +118,18 @@ class CharacterMonthlySummary(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together     = ("main_character_id", "period")
         verbose_name        = "Resumen mensual por personaje"
         verbose_name_plural = "Resúmenes mensuales por personaje"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["main_character_id", "period"],
+                name="unique_char_monthly_summary",
+            ),
+        ]
         indexes = [
-            models.Index(fields=["period", "corporation_id"]),
-            models.Index(fields=["period", "mining_isk"]),
-            models.Index(fields=["period", "bounty_isk"]),
+            models.Index(fields=["period", "corporation_id"], name="koru_cms_period_corp"),
+            models.Index(fields=["period", "mining_isk"],     name="koru_cms_period_mining"),
+            models.Index(fields=["period", "bounty_isk"],     name="koru_cms_period_bounty"),
         ]
 
     def __str__(self):
@@ -158,11 +163,16 @@ class CharacterMonthlyOre(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together     = ("main_character_id", "period", "type_id")
         verbose_name        = "Ore mensual por personaje"
         verbose_name_plural = "Ore mensuales por personaje"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["main_character_id", "period", "type_id"],
+                name="unique_char_monthly_ore",
+            ),
+        ]
         indexes = [
-            models.Index(fields=["period", "corporation_id", "type_id"]),
+            models.Index(fields=["period", "corporation_id", "type_id"], name="koru_cmo_period_corp_type"),
         ]
 
     def __str__(self):

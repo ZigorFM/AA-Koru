@@ -97,6 +97,12 @@
                         <span id="deltaGasP" class="small ms-1"></span>
                     </button>
                 </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabPvP" type="button">
+                        <i class="fas fa-crosshairs me-1 text-danger"></i>PvP
+                        {% if pvp_personal %}<span class="badge bg-danger ms-1">{{ pvp_personal.ships_destroyed }}/{{ pvp_personal.ships_lost }}</span>{% endif %}
+                    </button>
+                </li>
                 <li class="ms-auto d-flex align-items-center px-3">
                     <span class="small text-muted me-2">Balance del mes:</span>
                     <span class="fw-bold" id="balancePersonalBadge">—</span>
@@ -474,6 +480,100 @@
         {% endif %}
     </div>{# /tab Gastos #}
 
+
+    {# ── Tab PvP ── #}
+    <div class="tab-pane fade" id="tabPvP" role="tabpanel">
+        {% if error_pvp_personal %}
+        <div class="alert alert-warning"><i class="fas fa-exclamation-triangle me-2"></i>Error al cargar datos PvP.</div>
+        {% elif not pvp_personal %}
+        <div class="text-center text-muted py-5">
+            <i class="fas fa-peace fa-3x mb-3 d-block"></i>
+            Sin actividad PvP registrada para este período.
+        </div>
+        {% else %}
+
+        {# 3 bloques principales #}
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-md-4">
+                <div class="card h-100 text-center" style="border-top:4px solid #10b981">
+                    <div class="card-body py-4">
+                        <div class="display-4 text-success fw-bold mb-1">{{ pvp_personal.ships_destroyed }}</div>
+                        <div class="fw-semibold mb-1">Kills</div>
+                        <div class="small text-muted">{{ pvp_personal.isk_destroyed|rkisk }} ISK</div>
+                        <hr class="my-2">
+                        <div class="row text-center g-0 small">
+                            <div class="col"><div class="fw-bold" style="color:#8b5cf6">{{ pvp_personal.participations }}</div><div class="text-muted">Part.</div></div>
+                            <div class="col"><div class="fw-bold" style="color:#06b6d4">{{ pvp_personal.solo_kills }}</div><div class="text-muted">Solo</div></div>
+                            <div class="col"><div class="fw-bold text-info">{{ pvp_personal.top_damage_kills }}</div><div class="text-muted">Top dmg</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-4">
+                <div class="card h-100 text-center" style="border-top:4px solid #ef4444">
+                    <div class="card-body py-4">
+                        <div class="display-4 text-danger fw-bold mb-1">{{ pvp_personal.ships_lost }}</div>
+                        <div class="fw-semibold mb-1">Losses</div>
+                        <div class="small text-muted">{{ pvp_personal.isk_lost|rkisk }} ISK</div>
+                        <hr class="my-2">
+                        <div class="small text-muted" id="pvpEffPct">ISK Efficiency calculando…</div>
+                        <div class="mt-1">
+                            <div class="progress" style="height:6px">
+                                <div class="progress-bar" id="pvpEffBar" role="progressbar" style="width:0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-4">
+                <div class="card h-100 text-center" style="border-top:4px solid #f97316">
+                    <div class="card-body py-4">
+                        <div class="display-4 text-warning fw-bold mb-1">{{ pvp_personal.final_blows }}</div>
+                        <div class="fw-semibold mb-1">Killmarks</div>
+                        <div class="small text-muted">tiros de gracia</div>
+                        <hr class="my-2">
+                        <div class="small text-muted">Daño infligido</div>
+                        <div class="fw-bold text-warning small">{{ pvp_personal.damage_dealt|rkisk }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Gráfica tendencia #}
+        {% if pvp_tendencia %}
+        <div class="row g-4">
+            <div class="col-12 col-lg-8">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-chart-line me-2 text-danger"></i><strong>Tendencia — últimos 6 meses</strong></div>
+                    <div class="card-body">
+                        <div style="position:relative;height:220px"><canvas id="chartPvpPersonal"></canvas></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-lg-4">
+                <div class="card h-100">
+                    <div class="card-header"><i class="fas fa-list me-2"></i><strong>Detalle del mes</strong></div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <tbody>
+                                <tr><td class="text-muted ps-3">Final Blows</td><td class="fw-bold text-end pe-3">{{ pvp_personal.final_blows }}</td></tr>
+                                <tr><td class="text-muted ps-3">Participaciones</td><td class="fw-bold text-end pe-3" style="color:#8b5cf6">{{ pvp_personal.participations }}</td></tr>
+                                <tr><td class="text-muted ps-3">Solo Kills</td><td class="fw-bold text-end pe-3" style="color:#06b6d4">{{ pvp_personal.solo_kills }}</td></tr>
+                                <tr><td class="text-muted ps-3">Top Damage Kills</td><td class="fw-bold text-end pe-3 text-info">{{ pvp_personal.top_damage_kills }}</td></tr>
+                                <tr><td class="text-muted ps-3">Daño Total</td><td class="fw-bold text-end pe-3 text-warning">{{ pvp_personal.damage_dealt|rkisk }}</td></tr>
+                                <tr class="table-success"><td class="text-muted ps-3">ISK Destruido</td><td class="fw-bold text-end pe-3 text-success">{{ pvp_personal.isk_destroyed|rkisk }}</td></tr>
+                                <tr class="table-danger"><td class="text-muted ps-3">ISK Perdido</td><td class="fw-bold text-end pe-3 text-danger">{{ pvp_personal.isk_lost|rkisk }}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% endif %}{# /pvp_personal #}
+    </div>{# /tabPvP #}
+
     </div>{# /tab-content #}
 
 {% endif %}
@@ -680,6 +780,96 @@
     }
 })();
 
+    // ── PvP personal — gráfica tendencia ────────────────────────────────
+    (function() {
+        const dataPvp = {{ chart_pvp_personal|safe }};
+        const ctxPvp  = document.getElementById('chartPvpPersonal');
+        if (!ctxPvp || !dataPvp.labels || !dataPvp.labels.length) return;
+
+        // ISK efficiency por período
+        const iskDest  = dataPvp.isk_destroyed  || [];
+        const iskLost  = dataPvp.isk_lost        || [];
+        const effData  = iskDest.map((d, i) => {
+            const total = d + (iskLost[i] || 0);
+            return total > 0 ? Math.round(d / total * 100) : 0;
+        });
+
+        // ISK efficiency del mes seleccionado (último punto o el que corresponde)
+        const pvpEffEl  = document.getElementById('pvpEffPct');
+        const pvpEffBar = document.getElementById('pvpEffBar');
+        // Calcular ISK eff del período seleccionado directamente desde el template
+        const iskD = {{ pvp_personal.isk_destroyed|default:0 }};
+        const iskL = {{ pvp_personal.isk_lost|default:0 }};
+        const totalIsk = iskD + iskL;
+        const curEff = totalIsk > 0 ? Math.round(iskD / totalIsk * 100) : 0;
+        if (pvpEffEl) {
+            pvpEffEl.textContent = 'ISK Efficiency: ' + curEff + '%';
+            pvpEffEl.className = 'small fw-bold ' + (curEff >= 50 ? 'text-success' : 'text-danger');
+        }
+        if (pvpEffBar) {
+            pvpEffBar.style.width = curEff + '%';
+            pvpEffBar.className = 'progress-bar ' + (curEff >= 60 ? 'bg-success' : curEff >= 40 ? 'bg-warning' : 'bg-danger');
+        }
+
+        new Chart(ctxPvp, {
+            type: 'bar',
+            data: {
+                labels: dataPvp.labels,
+                datasets: [
+                    {
+                        label: 'Ships Killed',
+                        data:  dataPvp.ships_destroyed,
+                        backgroundColor: 'rgba(16,185,129,0.7)',
+                        borderColor: '#10b981',
+                        borderWidth: 1,
+                        yAxisID: 'yShips',
+                        order: 2,
+                    },
+                    {
+                        label: 'Ships Lost',
+                        data:  dataPvp.ships_lost,
+                        backgroundColor: 'rgba(239,68,68,0.5)',
+                        borderColor: '#ef4444',
+                        borderWidth: 1,
+                        yAxisID: 'yShips',
+                        order: 3,
+                    },
+                    {
+                        label: 'ISK Eff. %',
+                        data:  effData,
+                        type: 'line',
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#f59e0b',
+                        pointRadius: 4,
+                        tension: 0.3,
+                        yAxisID: 'yEff',
+                        order: 1,
+                    },
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                if (ctx.dataset.label === 'ISK Eff. %') return ' ISK Eff. ' + ctx.raw + '%';
+                                return ' ' + ctx.dataset.label + ': ' + ctx.raw;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    yShips: { position: 'left',  beginAtZero: true, title: { display: true, text: 'Ships' } },
+                    yEff:   { position: 'right', beginAtZero: true, max: 100, title: { display: true, text: 'ISK Eff. %' }, grid: { drawOnChartArea: false } },
+                }
+            }
+        });
+    })();
 
     // ── Por sistema toggle ───────────────────────────────────────────
     const sisModeLabels = { isk_estimado: 'ISK Bruto', isk_comp: 'ISK Comp.', isk_repr: 'ISK 85%' };

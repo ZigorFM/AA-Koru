@@ -2044,14 +2044,14 @@ def pvp_dashboard(request):
     corp_names = list(TrackedCorporation.objects.filter(is_active=True).values_list("corporation_name", flat=True))
 
     # Top killers por ISK destroyed
-    top_isk_destroyed = []
-    # Top killers por ships destroyed
-    top_ships_killed = []
-    # Top ISK efficiency (min 5 kills)
-    top_efficiency = []
-    # Tendencia mensual agregada
-    pvp_tendencia = []
-    error_pvp = False
+    top_isk_destroyed  = []
+    top_ships_killed   = []
+    top_efficiency     = []
+    top_participations = []
+    top_solo           = []
+    top_damage         = []
+    pvp_tendencia      = []
+    error_pvp          = False
 
     if mes == 1:
         period_ant = f"{anio - 1}-12"
@@ -2094,6 +2094,37 @@ def pvp_dashboard(request):
         top_efficiency.sort(key=lambda r: r._eff, reverse=True)
         top_efficiency = top_efficiency[:10]
 
+        # Top por participaciones
+        top_participations = list(
+            CharacterMonthlyPvp.objects
+            .filter(period=periodo_sel, corporation_id__in=corp_ids, participations__gt=0)
+            .order_by("-participations")[:15]
+            .values("main_character_name", "main_character_id",
+                    "participations", "ships_destroyed", "final_blows", "solo_kills")
+        )
+
+        # Top por solo kills
+        top_solo = list(
+            CharacterMonthlyPvp.objects
+            .filter(period=periodo_sel, corporation_id__in=corp_ids, solo_kills__gt=0)
+            .order_by("-solo_kills")[:15]
+            .values("main_character_name", "main_character_id",
+                    "solo_kills", "ships_destroyed", "isk_destroyed")
+        )
+        for r in top_solo:
+            r["isk_destroyed"] = float(r["isk_destroyed"] or 0)
+
+        # Top por daño infligido
+        top_damage = list(
+            CharacterMonthlyPvp.objects
+            .filter(period=periodo_sel, corporation_id__in=corp_ids, damage_dealt__gt=0)
+            .order_by("-damage_dealt")[:15]
+            .values("main_character_name", "main_character_id",
+                    "damage_dealt", "participations", "top_damage_kills", "final_blows")
+        )
+        for r in top_damage:
+            r["damage_dealt"] = int(r["damage_dealt"] or 0)
+
         # Tendencia mensual agregada de la corp
         pvp_tendencia = _summary_pvp_tendencias(corp_ids)
 
@@ -2101,38 +2132,61 @@ def pvp_dashboard(request):
         logger.error("koru_stats pvp_dashboard: %s", e)
         error_pvp = True
 
-    # Totales del mes
+    # Totales del mes (agregado directo de DB)
     totals = {}
-    if top_isk_destroyed:
-        totals["total_isk_destroyed"] = sum(r["isk_destroyed"] for r in top_isk_destroyed)
-        totals["total_isk_lost"]      = sum(r["isk_lost"] for r in top_isk_destroyed)
-        totals["total_kills"]         = sum(int(r["ships_destroyed"]) for r in top_isk_destroyed)
-        totals["total_deaths"]        = sum(int(r["ships_lost"]) for r in top_isk_destroyed)
-        total_isk = totals["total_isk_destroyed"] + totals["total_isk_lost"]
-        totals["corp_efficiency"] = round(
-            totals["total_isk_destroyed"] / total_isk * 100, 1
-        ) if total_isk else 0.0
+    try:
+        agg = (CharacterMonthlyPvp.objects
+               .filter(period=periodo_sel, corporation_id__in=corp_ids)
+               .aggregate(
+                   k=Sum("ships_destroyed"), d=Sum("ships_lost"),
+                   id=Sum("isk_destroyed"),  il=Sum("isk_lost"),
+                   pa=Sum("participations"), so=Sum("solo_kills"),
+                   fb=Sum("final_blows"),
+               ))
+        total_isk_all = float(agg["id"] or 0) + float(agg["il"] or 0)
+        totals = {
+            "total_kills":          int(agg["k"]  or 0),
+            "total_deaths":         int(agg["d"]  or 0),
+            "total_isk_destroyed":  float(agg["id"] or 0),
+            "total_isk_lost":       float(agg["il"] or 0),
+            "total_participations": int(agg["pa"] or 0),
+            "total_solo_kills":     int(agg["so"] or 0),
+            "total_final_blows":    int(agg["fb"] or 0),
+            "corp_efficiency":      round(float(agg["id"] or 0) / total_isk_all * 100, 1) if total_isk_all else 0.0,
+        }
+    except Exception:
+        pass
 
     context = {
-        "mes":               date(anio, mes, 1).strftime("%B %Y"),
+        "mes":                date(anio, mes, 1).strftime("%B %Y"),
         **selector_ctx,
-        "corp_names":        corp_names,
-        "top_isk_destroyed": top_isk_destroyed,
-        "top_ships_killed":  top_ships_killed,
-        "top_efficiency":    top_efficiency,
-        "pvp_tendencia":     pvp_tendencia,
-        "totals":            totals,
-        "error_pvp":         error_pvp,
-        "is_fc":             request.user.has_perm("koru_stats.fc_access"),
-        "chart_top_isk":  _to_json({
+        "corp_names":         corp_names,
+        "top_isk_destroyed":  top_isk_destroyed,
+        "top_ships_killed":   top_ships_killed,
+        "top_efficiency":     top_efficiency,
+        "top_participations": top_participations,
+        "top_solo":           top_solo,
+        "top_damage":         top_damage,
+        "pvp_tendencia":      pvp_tendencia,
+        "totals":             totals,
+        "error_pvp":          error_pvp,
+        "is_fc":              request.user.has_perm("koru_stats.fc_access"),
+        "chart_top_isk": _to_json({
             "labels": [r["main_character_name"] for r in top_isk_destroyed[:10]],
             "data":   [r["isk_destroyed"] for r in top_isk_destroyed[:10]],
+        }),
+        "chart_top_participations": _to_json({
+            "labels": [r["main_character_name"] for r in top_participations[:10]],
+            "data":   [int(r["participations"] or 0) for r in top_participations[:10]],
         }),
         "chart_tendencia_pvp": _to_json({
             "labels":          [r["period"] for r in pvp_tendencia],
             "isk_destroyed":   [float(r["total_isk_destroyed"] or 0) for r in pvp_tendencia],
             "isk_lost":        [float(r["total_isk_lost"] or 0) for r in pvp_tendencia],
             "ships_destroyed": [int(r["total_ships_destroyed"] or 0) for r in pvp_tendencia],
+            "ships_lost":      [int(r["total_ships_lost"] or 0) for r in pvp_tendencia],
+            "participations":  [int(r["total_participations"] or 0) for r in pvp_tendencia],
+            "solo_kills":      [int(r["total_solo_kills"] or 0) for r in pvp_tendencia],
         }),
     }
     return render(request, "koru_stats/pvp_dashboard.html", context)

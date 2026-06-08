@@ -2275,7 +2275,7 @@ def pvp_dashboard(request):
     # Tab Piloto
     pilot_list  = []
     pilot_stats = None
-    pilot_name  = request.GET.get("piloto", "").strip()
+    pilot_name  = (request.GET.get("pilot") or request.GET.get("piloto") or "").strip()
     try:
         pilot_list = _pvp_pilot_list(corp_ids)
     except Exception as e:
@@ -2313,8 +2313,8 @@ def pvp_dashboard(request):
         }),
         "chart_hourly": _to_json({
             "labels": [f"{h:02d}:00" for h in range(24)],
-            "kills":  [hourly_activity[h]["kills"]  for h in range(24)],
-            "losses": [hourly_activity[h]["losses"] for h in range(24)],
+            "kills":  [hourly_activity[h]["kills"]  if len(hourly_activity) == 24 else 0 for h in range(24)],
+            "losses": [hourly_activity[h]["losses"] if len(hourly_activity) == 24 else 0 for h in range(24)],
         }),
         "chart_pilot_monthly": _to_json({
             "labels":  [r["period"] for r in (pilot_stats["monthly"] if pilot_stats else [])],

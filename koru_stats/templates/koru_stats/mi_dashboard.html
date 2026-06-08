@@ -247,7 +247,9 @@
                         <tbody>
                             {% for r in ore_breakdown %}
                             <tr>
-                                <td class="small">{{ r.ore }}</td>
+                                <td class="small">
+                                    {% if r.type_id %}<img src="https://images.evetech.net/types/{{ r.type_id }}/icon?size=32" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:5px" onerror="this.style.display='none'">{% endif %}{{ r.ore }}
+                                </td>
                                 <td class="text-end font-monospace small">
                                     <span class="ore-u" style="display:none">{{ r.unidades|rknum }}</span>
                                     <span class="ore-m3" style="display:none">{{ r.m3_total|rknum }}</span>

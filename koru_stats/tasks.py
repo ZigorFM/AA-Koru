@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 
 # IDs de minerales basicos en EVE Online
 MINERAL_IDS = [34, 35, 36, 37, 38, 39, 40, 11399]
+# groupID de ice en el SDE de EVE
+ICE_GROUP_ID = 465
 # Region The Forge (Jita) para precios de referencia
 FUZZWORK_REGION = 10000002
 
@@ -313,6 +315,83 @@ def _get_ore_data():
     return raw_ores, ore_materials, compressed_map
 
 
+def _get_ice_data():
+    """
+    Retorna (ice_types, ice_materials, compressed_map) para tipos de hielo.
+    Usa groupID=465 (Ice) de la SDE para encontrar todos los tipos de ice.
+    ice_types: list de (type_id, type_name, portion_size)
+    ice_materials: {type_id: [(mat_id, qty_per_unit), ...]}
+    compressed_map: {raw_type_id: compressed_type_id}
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT it.id, it.name, COALESCE(it.portionSize, 1) "
+                "FROM eve_sde_itemtype it "
+                "JOIN eve_sde_itemgroup ig ON ig.id = it.group_id "
+                "WHERE ig.id = %s AND it.published = 1 "
+                "AND it.name NOT LIKE 'Compressed %%' "
+                "ORDER BY it.name",
+                [ICE_GROUP_ID]
+            )
+            rows = cursor.fetchall()
+    except Exception as exc:
+        logger.error("koru _get_ice_data: %s", exc)
+        return [], {}, {}
+
+    if not rows:
+        logger.warning("koru _get_ice_data: no se encontraron tipos de ice en SDE (groupID=%s)", ICE_GROUP_ID)
+        return [], {}, {}
+
+    ice_types = [(int(r[0]), r[1], int(r[2] or 1)) for r in rows]
+    ice_ids = [t[0] for t in ice_types]
+    portion_by_id = {t[0]: t[2] for t in ice_types}
+
+    # Compressed ice map
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT it.id, it.name FROM eve_sde_itemtype it "
+                "JOIN eve_sde_itemgroup ig ON ig.id = it.group_id "
+                "WHERE ig.id = %s AND it.published = 1 "
+                "AND it.name LIKE 'Compressed %%'",
+                [ICE_GROUP_ID]
+            )
+            comp_rows = cursor.fetchall()
+    except Exception:
+        comp_rows = []
+
+    compressed_by_name = {r[1]: int(r[0]) for r in comp_rows}
+    compressed_map = {}
+    for tid, name, _ in ice_types:
+        comp_name = "Compressed " + name
+        if comp_name in compressed_by_name:
+            compressed_map[tid] = compressed_by_name[comp_name]
+
+    # Ice reprocessing materials
+    ice_materials = {}
+    if ice_ids:
+        ph = ",".join(["%s"] * len(ice_ids))
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT item_type_id, material_item_type_id, quantity "
+                    "FROM eve_sde_itemtypematerials "
+                    "WHERE item_type_id IN (" + ph + ")",
+                    ice_ids
+                )
+                for ore_id, mat_id, qty in cursor.fetchall():
+                    ps = portion_by_id.get(ore_id, 1)
+                    if qty is None:
+                        continue
+                    qty_per_unit = float(qty) / max(ps, 1)
+                    ice_materials.setdefault(ore_id, []).append((mat_id, qty_per_unit))
+        except Exception as exc:
+            logger.error("koru _get_ice_data materials: %s", exc)
+
+    return ice_types, ice_materials, compressed_map
+
+
 # ---------------------------------------------------------------------------
 # Tarea 0 — OreMarketPrice (precios desde Fuzzwork)
 # ---------------------------------------------------------------------------
@@ -374,7 +453,46 @@ def update_ore_prices():
         )
         saved += 1
 
-    logger.info("update_ore_prices: %d tipos actualizados desde Fuzzwork", saved)
+    # --- Ice ---
+    ice_types, ice_materials, ice_compressed_map = _get_ice_data()
+    if ice_types:
+        all_ice_ids = (
+            [tid for tid, _, _ in ice_types]
+            + list(ice_compressed_map.values())
+            + list({mat_id for mats in ice_materials.values() for mat_id, _ in mats})
+        )
+        ice_prices = _fetch_fuzzwork_prices(list(set(all_ice_ids)))
+
+        for ice_id, ice_name, portion_size in ice_types:
+            price_raw = ice_prices.get(ice_id, {}).get("sell", 0)
+
+            comp_id = ice_compressed_map.get(ice_id)
+            if comp_id and comp_id in ice_prices:
+                comp_sell = ice_prices[comp_id].get("sell", 0)
+                price_compressed = comp_sell / max(portion_size, 1)
+            else:
+                price_compressed = 0.0
+
+            price_reprocessed = 0.0
+            for mat_id, qty_per_unit in ice_materials.get(ice_id, []):
+                mat_sell = ice_prices.get(mat_id, {}).get("sell", 0)
+                price_reprocessed += qty_per_unit * 0.85 * mat_sell
+
+            OreMarketPrice.objects.update_or_create(
+                type_id=ice_id,
+                defaults={
+                    "type_name":         ice_name,
+                    "price_raw":         round(price_raw,         4),
+                    "price_compressed":  round(price_compressed,  4),
+                    "price_reprocessed": round(price_reprocessed, 4),
+                },
+            )
+            saved += 1
+        logger.info("update_ore_prices: %d tipos de ice actualizados", len(ice_types))
+    else:
+        logger.warning("update_ore_prices: no se encontraron tipos de ice en SDE")
+
+    logger.info("update_ore_prices: %d tipos totales actualizados desde Fuzzwork", saved)
     return saved
 
 
@@ -844,7 +962,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
 
 
 def _zkill_get_single_page(url):
-    """Fetch una sola página de zkillboard. Devuelve lista o []."""
+    """Fetch una sola página de zkillboard. Devuelve lista o []."""""
     try:
         r = http_requests.get(url, headers=ZKILL_HEADERS, timeout=20)
         if r.status_code == 429:

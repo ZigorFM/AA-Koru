@@ -691,6 +691,7 @@ def mi_dashboard(request):
         ore_breakdown = [
             {
                 "ore":          r.type_name,
+                "type_id":      r.type_id,
                 "unidades":     int(r.quantity),
                 "m3_total":     float(r.m3),
                 "isk_estimado": float(r.isk),

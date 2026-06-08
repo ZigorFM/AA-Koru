@@ -281,6 +281,11 @@ class CharacterKillRecord(models.Model):
     kill_date           = models.DateField(null=True, blank=True)
     final_blow          = models.BooleanField(default=False)
     solo                = models.BooleanField(default=False)
+    # Datos del enemigo (solo en losses: el piloto que dio el final blow)
+    enemy_char_id       = models.BigIntegerField(null=True, blank=True, db_index=True)
+    enemy_char_name     = models.CharField(max_length=255, default="", blank=True)
+    enemy_corp_id       = models.IntegerField(null=True, blank=True, db_index=True)
+    enemy_corp_name     = models.CharField(max_length=255, default="", blank=True)
 
     class Meta:
         verbose_name        = "Registro killmail"

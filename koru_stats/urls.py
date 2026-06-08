@@ -10,4 +10,7 @@ urlpatterns = [
     path("lunas/", views.moon_dashboard_v2, name="moon_dashboard"),
     path("lunas/pagar/<int:payment_id>/", views.moon_mark_paid, name="moon_mark_paid"),
     path("pvp/", views.pvp_dashboard, name="pvp_dashboard"),
+    path("export/resumen/", views.export_csv_summary, name="export_csv_summary"),
+    path("export/pvp/",     views.export_csv_pvp,     name="export_csv_pvp"),
+    path("export/ore/",     views.export_csv_ore,     name="export_csv_ore"),
 ]

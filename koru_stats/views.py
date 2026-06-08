@@ -1232,10 +1232,26 @@ def corp_dashboard(request):
         if r["ref_type"] == "industry_job_tax"
     )
 
+    # Kill feed y top enemigos
+    corp_ids_tracked = list(TrackedCorporation.objects.filter(is_active=True).values_list("corporation_id", flat=True))
+    kill_feed   = []
+    top_enemies = {"corps": [], "pilotos": []}
+    try:
+        kill_feed = _corp_kill_feed(corp_ids_tracked, limit=50)
+    except Exception as e:
+        logger.error("koru_stats kill_feed: %s", e)
+    try:
+        top_enemies = _summary_top_enemies(corp_ids_tracked, periodo_sel)
+    except Exception as e:
+        logger.error("koru_stats top_enemies: %s", e)
+
     context = {
         "mes":              date(anio, mes, 1).strftime("%B %Y"),
+        "periodo_sel":      periodo_sel,
         **selector_ctx,
         "corp_names":       corp_names,
+        "kill_feed":        kill_feed,
+        "top_enemies":      top_enemies,
         "corp_ingresos_cat": corp_ingresos_cat,
         "corp_gastos_cat":   corp_gastos_cat,
         "total_ingresos_cat":     sum(c["total"] for c in corp_ingresos_cat),
@@ -2269,3 +2285,188 @@ def pvp_dashboard(request):
     }
     return render(request, "koru_stats/pvp_dashboard.html", context)
 
+
+
+# ---------------------------------------------------------------------------
+# Kill feed corp + Top enemigos
+# ---------------------------------------------------------------------------
+
+def _get_corp_main_char_ids(corp_ids):
+    """Devuelve set de main_character_id para miembros de las corps dadas."""
+    if not corp_ids:
+        return set()
+    ph = ",".join(["%s"] * len(corp_ids))
+    sql = (
+        "SELECT DISTINCT main_ec.character_id"
+        " FROM eveonline_evecharacter          ec"
+        " JOIN authentication_characterownership co      ON co.character_id = ec.id"
+        " JOIN authentication_userprofile        up      ON up.user_id      = co.user_id"
+        " JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id"
+        " WHERE ec.corporation_id IN (" + ph + ")"
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, corp_ids)
+            return {row[0] for row in cursor.fetchall()}
+    except Exception as exc:
+        logger.error("koru _get_corp_main_char_ids: %s", exc)
+        return set()
+
+
+def _corp_kill_feed(corp_ids, limit=50):
+    """Ultimos kills y losses de todos los miembros de la corp."""
+    char_ids = list(_get_corp_main_char_ids(corp_ids))
+    if not char_ids:
+        return []
+    return list(
+        CharacterKillRecord.objects
+        .filter(main_character_id__in=char_ids)
+        .order_by("-kill_date", "-killmail_id")
+        .values(
+            "killmail_id", "main_character_name", "main_character_id",
+            "is_loss", "ship_type_id", "ship_name", "value_isk",
+            "kill_date", "final_blow", "solo",
+            "enemy_char_name", "enemy_corp_name",
+        )[:limit]
+    )
+
+
+def _summary_top_enemies(corp_ids, period, limit=10):
+    """Top corps y pilotos enemigos que mas kills tienen contra nuestra corp."""
+    from django.db.models import Count, Sum as DjSum
+    char_ids = list(_get_corp_main_char_ids(corp_ids))
+    if not char_ids:
+        return {"corps": [], "pilotos": []}
+
+    qs_base = CharacterKillRecord.objects.filter(
+        main_character_id__in=char_ids,
+        is_loss=True,
+        period=period,
+    )
+
+    top_corps = list(
+        qs_base
+        .exclude(enemy_corp_id__isnull=True)
+        .values("enemy_corp_id", "enemy_corp_name")
+        .annotate(kills=Count("killmail_id"), isk_destruido=DjSum("value_isk"))
+        .order_by("-kills")[:limit]
+    )
+    top_pilotos = list(
+        qs_base
+        .exclude(enemy_char_id__isnull=True)
+        .values("enemy_char_id", "enemy_char_name")
+        .annotate(kills=Count("killmail_id"), isk_destruido=DjSum("value_isk"))
+        .order_by("-kills")[:limit]
+    )
+    return {"corps": top_corps, "pilotos": top_pilotos}
+
+
+# ---------------------------------------------------------------------------
+# Export CSV
+# ---------------------------------------------------------------------------
+
+import csv as _csv
+from django.http import HttpResponse as _HttpResponse
+
+
+@login_required
+def export_csv_summary(request):
+    mes, anio, inicio, fin, periodo_sel = _parse_periodo(request)
+    corp_ids = _get_active_corp_ids()
+    qs = (CharacterMonthlySummary.objects
+          .filter(period=periodo_sel, corporation_id__in=corp_ids)
+          .order_by("-mining_isk"))
+
+    response = _HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="resumen_{periodo_sel}.csv"'
+    response.write("\ufeff")
+    writer = _csv.writer(response)
+    writer.writerow([
+        "Piloto", "Corp ID", "Periodo",
+        "Mining ISK Raw", "Mining ISK Compressed", "Mining ISK Reprocessed",
+        "Mining m3", "Mining Unidades",
+        "Bounties ISK", "ESS ISK",
+    ])
+    for r in qs:
+        writer.writerow([
+            r.main_character_name, r.corporation_id, r.period,
+            round(float(r.mining_isk or 0), 0),
+            round(float(r.mining_isk_compressed or 0), 0),
+            round(float(r.mining_isk_reprocessed or 0), 0),
+            round(float(r.mining_m3 or 0), 2),
+            r.mining_units or 0,
+            round(float(r.bounty_isk or 0), 0),
+            round(float(r.ess_isk or 0), 0),
+        ])
+    return response
+
+
+@login_required
+def export_csv_pvp(request):
+    mes, anio, inicio, fin, periodo_sel = _parse_periodo(request)
+    corp_ids = _get_active_corp_ids()
+    qs = (CharacterMonthlyPvp.objects
+          .filter(period=periodo_sel, corporation_id__in=corp_ids)
+          .order_by("-isk_destroyed"))
+
+    response = _HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="pvp_{periodo_sel}.csv"'
+    response.write("\ufeff")
+    writer = _csv.writer(response)
+    writer.writerow([
+        "Piloto", "Corp ID", "Periodo",
+        "Ships Destroyed", "Ships Lost",
+        "ISK Destroyed", "ISK Lost", "ISK Efficiency %",
+        "Final Blows", "Participations", "Solo Kills",
+        "Top Damage Kills", "Damage Dealt",
+    ])
+    for r in qs:
+        writer.writerow([
+            r.main_character_name, r.corporation_id, r.period,
+            r.ships_destroyed or 0, r.ships_lost or 0,
+            round(float(r.isk_destroyed or 0), 0),
+            round(float(r.isk_lost or 0), 0),
+            round(r.isk_efficiency, 1),
+            r.final_blows or 0, r.participations or 0, r.solo_kills or 0,
+            r.top_damage_kills or 0,
+            round(float(r.damage_dealt or 0), 0),
+        ])
+    return response
+
+
+@login_required
+def export_csv_ore(request):
+    mes, anio, inicio, fin, periodo_sel = _parse_periodo(request)
+    corp_ids = _get_active_corp_ids()
+
+    # Nombre de piloto desde summary (CharacterMonthlyOre no tiene main_character_name)
+    name_map = dict(
+        CharacterMonthlySummary.objects
+        .filter(period=periodo_sel, corporation_id__in=corp_ids)
+        .values_list("main_character_id", "main_character_name")
+    )
+
+    qs = (CharacterMonthlyOre.objects
+          .filter(period=periodo_sel, corporation_id__in=corp_ids)
+          .order_by("main_character_id", "type_name"))
+
+    response = _HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="mining_detalle_{periodo_sel}.csv"'
+    response.write("\ufeff")
+    writer = _csv.writer(response)
+    writer.writerow([
+        "Piloto", "Corp ID", "Periodo",
+        "Tipo Recurso", "Cantidad", "m3",
+        "ISK Raw", "ISK Compressed", "ISK Reprocessed",
+    ])
+    for r in qs:
+        writer.writerow([
+            name_map.get(r.main_character_id, str(r.main_character_id)),
+            r.corporation_id, r.period,
+            r.type_name, r.quantity or 0,
+            round(float(r.m3 or 0), 2),
+            round(float(r.isk or 0), 0),
+            round(float(r.isk_compressed or 0), 0),
+            round(float(r.isk_reprocessed or 0), 0),
+        ])
+    return response

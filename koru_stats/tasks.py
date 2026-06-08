@@ -1006,7 +1006,8 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         "damage_dealt":     0,
     })
 
-    total_esi = 0
+    total_esi    = 0
+    pending_names = set()   # IDs de chars/corps enemigos a resolver al final
 
     for corp_id in corp_ids:
         for kind in ("kills", "losses"):
@@ -1064,6 +1065,16 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                             agg[key]["ships_lost"]  += 1
                             agg[key]["isk_lost"]    += value
                             own_ship = victim.get("ship_type_id", 0)
+                            # Capturar el piloto que dio el final blow
+                            attackers   = esi.get("attackers", [])
+                            final_att   = next((a for a in attackers if a.get("final_blow")), None)
+                            e_char_id   = final_att.get("character_id")   if final_att else None
+                            e_corp_id   = final_att.get("corporation_id") if final_att else None
+                            # Acumular IDs para resolver nombres en batch al final
+                            if e_char_id:
+                                pending_names.add(e_char_id)
+                            if e_corp_id:
+                                pending_names.add(e_corp_id)
                             CharacterKillRecord.objects.update_or_create(
                                 main_character_id=c["main_char_id"],
                                 killmail_id=km_id,
@@ -1077,6 +1088,8 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                                     kill_date=km_date,
                                     final_blow=False,
                                     solo=False,
+                                    enemy_char_id=e_char_id,
+                                    enemy_corp_id=e_corp_id,
                                 ),
                             )
 
@@ -1128,6 +1141,47 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
 
             logger.info("koru fetch_pvp: corp=%s %s — %d páginas, %d calls ESI",
                         corp_id, kind, page - 1, total_esi)
+
+    # ── Resolver nombres de enemigos vía ESI ──
+    name_map = {}   # {eve_id: (name, category)}
+    if pending_names:
+        try:
+            ids_list = list(pending_names)
+            for i in range(0, len(ids_list), 1000):
+                chunk = ids_list[i:i + 1000]
+                r = http_requests.post(
+                    "https://esi.evetech.net/latest/universe/names/?datasource=tranquility",
+                    json=chunk,
+                    timeout=20,
+                )
+                if r.status_code == 200:
+                    for entry in r.json():
+                        name_map[entry["id"]] = (entry["name"], entry.get("category", ""))
+        except Exception as exc:
+            logger.warning("koru fetch_pvp: ESI names batch falló: %s", exc)
+
+    # Actualizar enemy_char_name y enemy_corp_name en los KillRecords recién creados
+    if name_map:
+        from django.db.models import Q
+        ids_with_names = list(name_map.keys())
+        records_to_update = CharacterKillRecord.objects.filter(
+            Q(enemy_char_id__in=ids_with_names) | Q(enemy_corp_id__in=ids_with_names),
+            is_loss=True,
+        ).only("id", "enemy_char_id", "enemy_corp_id", "enemy_char_name", "enemy_corp_name")
+        bulk = []
+        for rec in records_to_update:
+            changed = False
+            if rec.enemy_char_id and rec.enemy_char_id in name_map and not rec.enemy_char_name:
+                rec.enemy_char_name = name_map[rec.enemy_char_id][0]
+                changed = True
+            if rec.enemy_corp_id and rec.enemy_corp_id in name_map and not rec.enemy_corp_name:
+                rec.enemy_corp_name = name_map[rec.enemy_corp_id][0]
+                changed = True
+            if changed:
+                bulk.append(rec)
+        if bulk:
+            CharacterKillRecord.objects.bulk_update(bulk, ["enemy_char_name", "enemy_corp_name"])
+            logger.info("koru fetch_pvp: %d enemy names actualizados", len(bulk))
 
     # ── Persistir ──
     saved = 0
@@ -1237,7 +1291,6 @@ def run_koru_aggregations(full=False):
 
     n_ore     = aggregate_character_monthly_ore(full=full)
     n_summary = aggregate_character_monthly_summary(full=full)
-
 
     try:
         n_pvp = aggregate_character_monthly_pvp(full=full)

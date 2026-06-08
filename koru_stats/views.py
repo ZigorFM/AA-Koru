@@ -4,7 +4,7 @@ import calendar
 from decimal import Decimal
 from datetime import date, datetime
 
-from django.contrib.auth.decorators import permission_required
+from django.contrib.auth.decorators import login_required, permission_required
 from django.core.cache import cache
 from django.db import connection
 from django.db.models import F, Sum

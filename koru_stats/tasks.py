@@ -580,6 +580,7 @@ def update_ore_prices():
     moon_group_ids = _get_group_ids_by_names([
         "Ubiquitous Moon Asteroids", "Common Moon Asteroids",
         "Uncommon Moon Asteroids", "Rare Moon Asteroids", "Exceptional Moon Asteroids",
+        "Prismaticite",
     ])
     if moon_group_ids:
         moon_types, moon_materials, moon_compressed_map = _get_generic_resource_data(
@@ -617,25 +618,54 @@ def update_ore_prices():
     else:
         logger.warning("update_ore_prices: no se encontraron grupos de moon ore en SDE")
 
-    # --- Gas (Harvestable Cloud) ---
-    gas_group_ids = _get_group_ids_by_names(["Harvestable Cloud"])
-    if gas_group_ids:
-        gas_types, _, _ = _get_generic_resource_data(list(gas_group_ids.values()))
+    # --- Gas (Harvestable Cloud + Compressed Gas en grupo separado) ---
+    gas_group_ids = _get_group_ids_by_names(["Harvestable Cloud", "Compressed Gas"])
+    harvestable_gid  = gas_group_ids.get("Harvestable Cloud")
+    compressed_gid   = gas_group_ids.get("Compressed Gas")
+    if harvestable_gid:
+        gas_types, _, _ = _get_generic_resource_data([harvestable_gid])
+        # Construir compressed_map desde el grupo "Compressed Gas"
+        gas_compressed_map = {}
+        if compressed_gid:
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id, name FROM eve_sde_itemtype "
+                        "WHERE group_id = %s AND published = 1",
+                        [compressed_gid]
+                    )
+                    comp_by_name = {row[1]: int(row[0]) for row in cursor.fetchall()}
+                for g_id, g_name, _ in gas_types:
+                    comp_name = "Compressed " + g_name
+                    if comp_name in comp_by_name:
+                        gas_compressed_map[g_id] = comp_by_name[comp_name]
+            except Exception as exc:
+                logger.error("update_ore_prices gas compressed map: %s", exc)
         if gas_types:
-            gas_prices = _fetch_fuzzwork_prices([tid for tid, _, _ in gas_types])
-            for g_id, g_name, _ in gas_types:
+            all_gas_ids = (
+                [tid for tid, _, _ in gas_types]
+                + list(gas_compressed_map.values())
+            )
+            gas_prices = _fetch_fuzzwork_prices(list(set(all_gas_ids)))
+            for g_id, g_name, portion_size in gas_types:
                 price_raw = gas_prices.get(g_id, {}).get("sell", 0)
+                comp_id   = gas_compressed_map.get(g_id)
+                if comp_id and comp_id in gas_prices:
+                    price_compressed = gas_prices[comp_id].get("sell", 0) / max(portion_size, 1)
+                else:
+                    price_compressed = 0.0
                 OreMarketPrice.objects.update_or_create(
                     type_id=g_id,
                     defaults={
                         "type_name":         g_name,
-                        "price_raw":         round(price_raw, 4),
-                        "price_compressed":  0.0,
+                        "price_raw":         round(price_raw,        4),
+                        "price_compressed":  round(price_compressed, 4),
                         "price_reprocessed": 0.0,
                     },
                 )
                 saved += 1
-            logger.info("update_ore_prices: %d tipos de gas actualizados", len(gas_types))
+            logger.info("update_ore_prices: %d tipos de gas actualizados (%d con precio comprimido)",
+                        len(gas_types), len(gas_compressed_map))
 
     logger.info("update_ore_prices: %d tipos totales actualizados desde Fuzzwork", saved)
     return saved

@@ -435,6 +435,37 @@
 
 
 </div>
+
+<script>
+(function(){
+    function paginate(tableId, pagDivId, pageSize) {
+        var tbody = document.querySelector('#' + tableId + ' tbody');
+        if (!tbody) return;
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length <= pageSize) return;
+        var pagDiv = document.getElementById(pagDivId);
+        if (!pagDiv) return;
+        var page = 0;
+        var totalPages = Math.ceil(rows.length / pageSize);
+        function render() {
+            rows.forEach(function(tr, i) {
+                tr.style.display = (i >= page * pageSize && i < (page + 1) * pageSize) ? '' : 'none';
+            });
+            var start = page * pageSize + 1;
+            var end   = Math.min((page + 1) * pageSize, rows.length);
+            pagDiv.innerHTML =
+                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="prev_' + tableId + '" ' + (page === 0 ? 'disabled' : '') + '>&laquo;</button>' +
+                '<span class="mx-2">' + start + '–' + end + ' de ' + rows.length + '</span>' +
+                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="next_' + tableId + '" ' + (page >= totalPages - 1 ? 'disabled' : '') + '>&raquo;</button>';
+            document.getElementById('prev_' + tableId).onclick = function() { if (page > 0) { page--; render(); } };
+            document.getElementById('next_' + tableId).onclick = function() { if (page < totalPages - 1) { page++; render(); } };
+        }
+        render();
+    }
+    paginate('tblContrib',  'pagContrib',  10);
+    paginate('tblSistemas', 'pagSistemas', 10);
+})();
+</script>
 {% endblock %}
 
 {% block extra_javascript %}
@@ -600,33 +631,6 @@
         ]}, options: { ...baseOpts, indexAxis: 'y', scales: { x: { beginAtZero: true, ticks: { callback: fmtISK } }, y: { ticks: { font: { family: 'monospace', size: 11 } } } }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } } });
     }
 
-    // Paginación tablas
-    function paginate(tableId, pagDivId, pageSize) {
-        const tbody = document.querySelector('#' + tableId + ' tbody');
-        if (!tbody) return;
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        if (rows.length <= pageSize) return;
-        const pagDiv = document.getElementById(pagDivId);
-        if (!pagDiv) return;
-        let page = 0;
-        const totalPages = Math.ceil(rows.length / pageSize);
-        function render() {
-            rows.forEach((tr, i) => {
-                tr.style.display = (i >= page * pageSize && i < (page + 1) * pageSize) ? '' : 'none';
-            });
-            const start = page * pageSize + 1;
-            const end   = Math.min((page + 1) * pageSize, rows.length);
-            pagDiv.innerHTML =
-                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="prev_' + tableId + '" ' + (page === 0 ? 'disabled' : '') + '>&laquo;</button>' +
-                '<span class="mx-2">' + start + '–' + end + ' de ' + rows.length + '</span>' +
-                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="next_' + tableId + '" ' + (page >= totalPages - 1 ? 'disabled' : '') + '>&raquo;</button>';
-            document.getElementById('prev_' + tableId).onclick = () => { if (page > 0) { page--; render(); } };
-            document.getElementById('next_' + tableId).onclick = () => { if (page < totalPages - 1) { page++; render(); } };
-        }
-        render();
-    }
-    paginate('tblContrib',  'pagContrib',  10);
-    paginate('tblSistemas', 'pagSistemas', 10);
 })();
 </script>
 {% endblock %}

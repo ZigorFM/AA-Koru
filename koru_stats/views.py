@@ -2263,6 +2263,34 @@ def pvp_dashboard(request):
     except Exception as e:
         logger.error("koru_stats pvp top_enemies: %s", e)
 
+    # Tab Actividad
+    daily_activity  = []
+    hourly_activity = []
+    try:
+        daily_activity  = _pvp_daily_activity(corp_ids, periodo_sel)
+        hourly_activity = _pvp_hourly_activity(corp_ids, periodo_sel)
+    except Exception as e:
+        logger.error("koru_stats pvp activity: %s", e)
+
+    # Tab Piloto
+    pilot_list  = []
+    pilot_stats = None
+    pilot_name  = request.GET.get("piloto", "").strip()
+    try:
+        pilot_list = _pvp_pilot_list(corp_ids)
+    except Exception as e:
+        logger.error("koru_stats pvp pilot_list: %s", e)
+    if pilot_name:
+        try:
+            match = next((p for p in pilot_list
+                          if p["main_character_name"].lower() == pilot_name.lower()), None)
+            if match:
+                pilot_stats = _pvp_pilot_stats(match["main_character_id"])
+                pilot_stats["name"] = match["main_character_name"]
+                pilot_stats["char_id"] = match["main_character_id"]
+        except Exception as e:
+            logger.error("koru_stats pvp pilot_stats: %s", e)
+
     context = {
         "mes":                date(anio, mes, 1).strftime("%B %Y"),
         "periodo_sel":        periodo_sel,
@@ -2273,6 +2301,26 @@ def pvp_dashboard(request):
         "kf_page":            kf_page,
         "kf_has_next":        kf_has_next,
         "kf_has_prev":        kf_has_prev,
+        "daily_activity":     daily_activity,
+        "hourly_activity":    hourly_activity,
+        "pilot_list":         pilot_list,
+        "pilot_stats":        pilot_stats,
+        "pilot_name":         pilot_name,
+        "chart_daily": _to_json({
+            "labels": [r["date"] for r in daily_activity],
+            "kills":  [r["kills"]  for r in daily_activity],
+            "losses": [r["losses"] for r in daily_activity],
+        }),
+        "chart_hourly": _to_json({
+            "labels": [f"{h:02d}:00" for h in range(24)],
+            "kills":  [hourly_activity[h]["kills"]  for h in range(24)],
+            "losses": [hourly_activity[h]["losses"] for h in range(24)],
+        }),
+        "chart_pilot_monthly": _to_json({
+            "labels":  [r["period"] for r in (pilot_stats["monthly"] if pilot_stats else [])],
+            "kills":   [int(r["ships_destroyed"] or 0) for r in (pilot_stats["monthly"] if pilot_stats else [])],
+            "losses":  [int(r["ships_lost"] or 0) for r in (pilot_stats["monthly"] if pilot_stats else [])],
+        }),
         "top_isk_destroyed":  top_isk_destroyed,
         "top_ships_killed":   top_ships_killed,
         "top_final_blows":    top_final_blows,
@@ -2490,3 +2538,123 @@ def export_csv_ore(request):
             round(float(r.isk_reprocessed or 0), 0),
         ])
     return response
+
+
+# ---------------------------------------------------------------------------
+# Actividad PvP — datos para tab Actividad y tab Piloto
+# ---------------------------------------------------------------------------
+
+def _pvp_daily_activity(corp_ids, period):
+    """Kills y losses por día del período para todos los miembros de la corp."""
+    from django.db.models import Count
+    char_ids = list(_get_corp_main_char_ids(corp_ids))
+    if not char_ids:
+        return []
+    rows = (CharacterKillRecord.objects
+            .filter(main_character_id__in=char_ids, period=period)
+            .exclude(kill_date__isnull=True)
+            .values("kill_date", "is_loss")
+            .annotate(count=Count("killmail_id"))
+            .order_by("kill_date"))
+    # Pivotar: {date: {kills, losses}}
+    pivot = {}
+    for r in rows:
+        d = str(r["kill_date"])
+        if d not in pivot:
+            pivot[d] = {"date": d, "kills": 0, "losses": 0}
+        if r["is_loss"]:
+            pivot[d]["losses"] += r["count"]
+        else:
+            pivot[d]["kills"] += r["count"]
+    return sorted(pivot.values(), key=lambda x: x["date"])
+
+
+def _pvp_hourly_activity(corp_ids, period):
+    """Actividad total por hora EVE (0-23) para el período."""
+    from django.db.models import Count
+    char_ids = list(_get_corp_main_char_ids(corp_ids))
+    if not char_ids:
+        return [{"hour": h, "kills": 0, "losses": 0} for h in range(24)]
+    rows = (CharacterKillRecord.objects
+            .filter(main_character_id__in=char_ids, period=period)
+            .exclude(kill_hour__isnull=True)
+            .values("kill_hour", "is_loss")
+            .annotate(count=Count("killmail_id")))
+    pivot = {h: {"hour": h, "kills": 0, "losses": 0} for h in range(24)}
+    for r in rows:
+        h = r["kill_hour"]
+        if h is not None and 0 <= h <= 23:
+            if r["is_loss"]:
+                pivot[h]["losses"] += r["count"]
+            else:
+                pivot[h]["kills"] += r["count"]
+    return [pivot[h] for h in range(24)]
+
+
+def _pvp_pilot_list(corp_ids):
+    """Lista de pilotos (main chars) de la corp con datos PvP — para autocomplete."""
+    char_ids = list(_get_corp_main_char_ids(corp_ids))
+    if not char_ids:
+        return []
+    return list(
+        CharacterMonthlyPvp.objects
+        .filter(corporation_id__in=corp_ids)
+        .values("main_character_id", "main_character_name")
+        .distinct()
+        .order_by("main_character_name")
+    )
+
+
+def _pvp_pilot_stats(main_char_id, n_months=6):
+    """Stats PvP de un piloto: resumen por mes + kill feed reciente."""
+    from django.db.models import Sum as DjSum
+    from datetime import datetime as dt
+    hoy = dt.now()
+    periods = []
+    for i in range(n_months):
+        m = hoy.month - i
+        y = hoy.year
+        if m <= 0:
+            m += 12
+            y -= 1
+        periods.append(f"{y}-{m:02d}")
+
+    monthly = list(
+        CharacterMonthlyPvp.objects
+        .filter(main_character_id=main_char_id, period__in=periods)
+        .order_by("period")
+        .values("period", "ships_destroyed", "ships_lost",
+                "isk_destroyed", "isk_lost", "final_blows",
+                "participations", "solo_kills")
+    )
+
+    totals = CharacterMonthlyPvp.objects.filter(
+        main_character_id=main_char_id, period__in=periods
+    ).aggregate(
+        k=DjSum("ships_destroyed"), d=DjSum("ships_lost"),
+        id=DjSum("isk_destroyed"),  il=DjSum("isk_lost"),
+        fb=DjSum("final_blows"),    pa=DjSum("participations"),
+        so=DjSum("solo_kills"),
+    )
+    total_isk = float(totals["id"] or 0) + float(totals["il"] or 0)
+    summary = {
+        "total_kills":    int(totals["k"]  or 0),
+        "total_losses":   int(totals["d"]  or 0),
+        "isk_destroyed":  float(totals["id"] or 0),
+        "isk_lost":       float(totals["il"] or 0),
+        "final_blows":    int(totals["fb"] or 0),
+        "participations": int(totals["pa"] or 0),
+        "solo_kills":     int(totals["so"] or 0),
+        "isk_efficiency": round(float(totals["id"] or 0) / total_isk * 100, 1) if total_isk else 0.0,
+    }
+
+    feed = list(
+        CharacterKillRecord.objects
+        .filter(main_character_id=main_char_id, period__in=periods)
+        .order_by("-kill_date", "-killmail_id")
+        .values("killmail_id", "is_loss", "ship_type_id", "ship_name",
+                "value_isk", "kill_date", "final_blow", "solo",
+                "enemy_char_name", "enemy_corp_name")[:30]
+    )
+
+    return {"monthly": monthly, "summary": summary, "feed": feed}

@@ -1052,6 +1052,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                         continue            # fuera del rango objetivo pero no demasiado viejo
 
                     km_date = km_time[:10] if km_time else None  # "2026-06-07"
+                    km_hour = int(km_time[11:13]) if km_time and len(km_time) >= 13 else None  # 0-23 UTC
                     victim_ship = esi.get("victim", {}).get("ship_type_id", 0)
 
                     if kind == "losses":
@@ -1086,6 +1087,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                                     ship_name=_esi_type_name(own_ship),
                                     value_isk=value,
                                     kill_date=km_date,
+                                    kill_hour=km_hour,
                                     final_blow=False,
                                     solo=False,
                                     enemy_char_id=e_char_id,
@@ -1128,6 +1130,7 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                                     ship_name=_esi_type_name(victim_ship),
                                     value_isk=value,
                                     kill_date=km_date,
+                                    kill_hour=km_hour,
                                     final_blow=got_final,
                                     solo=is_solo and got_final,
                                 ),
@@ -1280,6 +1283,60 @@ def run_koru_aggregations(full=False):
 
     Uso normal (diario): run_koru_aggregations.delay()
     Poblacion inicial:   run_koru_aggregations(full=True)
+    """
+    logger.info("koru run_koru_aggregations START (full=%s)", full)
+
+    try:
+        n_prices = update_ore_prices()
+    except Exception as exc:
+        logger.error("koru run_koru_aggregations: update_ore_prices fallo: %s\n%s", exc, traceback.format_exc())
+        n_prices = 0
+
+    n_ore     = aggregate_character_monthly_ore(full=full)
+    n_summary = aggregate_character_monthly_summary(full=full)
+
+    try:
+        n_pvp = aggregate_character_monthly_pvp(full=full)
+    except Exception as exc:
+        logger.warning("koru run_koru_aggregations: PvP skipped: %s", exc)
+        n_pvp = 0
+
+# Alias para compatibilidad con run_koru_aggregations
+aggregate_character_monthly_pvp = fetch_pvp_from_zkillboard
+
+
+# ---------------------------------------------------------------------------
+# Tareas coordinadoras
+# ---------------------------------------------------------------------------
+
+@shared_task
+def run_koru_ore_and_summary(full=False):
+    """
+    Ejecuta solo precios + ore + summary (sin PvP).
+    Diseñada para ejecutarse cada 6 horas para mantener datos frescos.
+    """
+    logger.info("koru run_koru_ore_and_summary START (full=%s)", full)
+
+    try:
+        n_prices = update_ore_prices()
+    except Exception as exc:
+        logger.error("koru ore_and_summary: update_ore_prices fallo: %s\n%s", exc, traceback.format_exc())
+        n_prices = 0
+
+    n_ore     = aggregate_character_monthly_ore(full=full)
+    n_summary = aggregate_character_monthly_summary(full=full)
+
+    logger.info(
+        "koru run_koru_ore_and_summary DONE — prices=%s, ore=%s, summary=%s",
+        n_prices, n_ore, n_summary,
+    )
+    return n_summary
+
+
+@shared_task
+def run_koru_aggregations(full=False):
+    """
+    Ejecuta todas las agregaciones en orden correcto.
     """
     logger.info("koru run_koru_aggregations START (full=%s)", full)
 

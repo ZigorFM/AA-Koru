@@ -286,6 +286,8 @@ class CharacterKillRecord(models.Model):
     enemy_char_name     = models.CharField(max_length=255, default="", blank=True)
     enemy_corp_id       = models.IntegerField(null=True, blank=True, db_index=True)
     enemy_corp_name     = models.CharField(max_length=255, default="", blank=True)
+    # Hora EVE (UTC) del killmail — para heatmap de actividad
+    kill_hour           = models.SmallIntegerField(null=True, blank=True)  # 0-23
 
     class Meta:
         verbose_name        = "Registro killmail"

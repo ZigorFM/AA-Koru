@@ -7,38 +7,6 @@
     {% translate "Finanzas Corp" as page_header %}
     {% translate "Ingresos y contribuciones del período" as optional_subtitle %}
     {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
-<script>
-(function(){
-    function paginate(tableId, pagDivId, pageSize) {
-        const tbody = document.querySelector('#' + tableId + ' tbody');
-        if (!tbody) return;
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        if (rows.length <= pageSize) return;  // sin paginación si caben todos
-
-        const pagDiv = document.getElementById(pagDivId);
-        let page = 0;
-        const totalPages = Math.ceil(rows.length / pageSize);
-
-        function render() {
-            rows.forEach((tr, i) => {
-                tr.style.display = (i >= page * pageSize && i < (page + 1) * pageSize) ? '' : 'none';
-            });
-            const start = page * pageSize + 1;
-            const end   = Math.min((page + 1) * pageSize, rows.length);
-            pagDiv.innerHTML =
-                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="prev_' + tableId + '" ' + (page === 0 ? 'disabled' : '') + '>&laquo;</button>' +
-                '<span class="mx-2">' + start + '–' + end + ' de ' + rows.length + '</span>' +
-                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="next_' + tableId + '" ' + (page >= totalPages - 1 ? 'disabled' : '') + '>&raquo;</button>';
-            document.getElementById('prev_' + tableId).onclick = () => { if (page > 0) { page--; render(); } };
-            document.getElementById('next_' + tableId).onclick = () => { if (page < totalPages - 1) { page++; render(); } };
-        }
-        render();
-    }
-
-    paginate('tblContrib',   'pagContrib',   10);
-    paginate('tblSistemas',  'pagSistemas',  10);
-})();
-</script>
 
 {% endblock %}
 
@@ -617,20 +585,35 @@
         new Chart(ctx, { type: 'doughnut', data: { labels, datasets: [{ data, backgroundColor: PAL.slice(0,labels.length), hoverOffset: 8 }] },
             options: { responsive: true, maintainAspectRatio: false, cutout: '55%',
                 plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } },
-                    tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } } });
+                    tooltip: { callbacks: { label: ctx => '
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    function paginate(tableId, pagDivId, pageSize) {
+        var tbody = document.querySelector('#' + tableId + ' tbody');
+        if (!tbody) return;
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length <= pageSize) return;
+        var pagDiv = document.getElementById(pagDivId);
+        if (!pagDiv) return;
+        var page = 0;
+        var totalPages = Math.ceil(rows.length / pageSize);
+        function render() {
+            rows.forEach(function(tr, i) {
+                tr.style.display = (i >= page * pageSize && i < (page + 1) * pageSize) ? '' : 'none';
+            });
+            var start = page * pageSize + 1;
+            var end   = Math.min((page + 1) * pageSize, rows.length);
+            pagDiv.innerHTML =
+                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="prev_' + tableId + '"' + (page === 0 ? ' disabled' : '') + '>&laquo;</button>' +
+                '<span class="mx-2 text-muted">' + start + '–' + end + ' de ' + rows.length + '</span>' +
+                '<button class="btn btn-sm btn-outline-secondary py-0 px-2" id="next_' + tableId + '"' + (page >= totalPages - 1 ? ' disabled' : '') + '>&raquo;</button>';
+            document.getElementById('prev_' + tableId).onclick = function() { if (page > 0) { page--; render(); } };
+            document.getElementById('next_' + tableId).onclick = function() { if (page < totalPages - 1) { page++; render(); } };
+        }
+        render();
     }
-
-    function buildChartGastos() {
-        window._chartGastosBuilt = true;
-        const labels = [{% for c in corp_gastos_cat %}"{{ c.categoria }}",{% endfor %}];
-        const data   = [{% for c in corp_gastos_cat %}{{ c.total|floatformat:2 }},{% endfor %}];
-        const ctx = document.getElementById('chartGastos');
-        if (!ctx || !labels.length) return;
-        new Chart(ctx, { type: 'doughnut', data: { labels, datasets: [{ data, backgroundColor: ['#ef4444','#f97316','#f59e0b','#8b5cf6','#6366f1','#ec4899'].slice(0,labels.length), hoverOffset: 8 }] },
-            options: { responsive: true, maintainAspectRatio: false, cutout: '55%',
-                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } },
-                    tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } } });
-    }
-})();
+    paginate('tblContrib',  'pagContrib',  10);
+    paginate('tblSistemas', 'pagSistemas', 10);
+});
 </script>
 {% endblock %}

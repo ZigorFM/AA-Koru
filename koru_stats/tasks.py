@@ -812,8 +812,10 @@ def aggregate_character_monthly_summary(periods=None, full=False):
 
     sql_bounty = (
         "SELECT"
-        "    main_ec.character_id AS main_character_id,"
-        "    DATE_FORMAT(wj.date, '%%Y-%%m') AS period,"
+        "    main_ec.character_id              AS main_character_id,"
+        "    MAX(main_ec.character_name)        AS main_character_name,"
+        "    MAX(ec.corporation_id)             AS corporation_id,"
+        "    DATE_FORMAT(wj.date, '%%Y-%%m')   AS period,"
         "    SUM(CASE WHEN wj.ref_type = 'bounty_prizes'       THEN wj.amount ELSE 0 END) AS bounty_isk,"
         "    SUM(CASE WHEN wj.ref_type = 'ess_escrow_transfer' THEN wj.amount ELSE 0 END) AS ess_isk"
         " FROM corptools_characterwalletjournalentry wj"
@@ -837,7 +839,16 @@ def aggregate_character_monthly_summary(periods=None, full=False):
 
         with connection.cursor() as cursor:
             cursor.execute(sql_bounty, params)
-            bounty = {(r[0], r[1]): (r[2] or 0, r[3] or 0) for r in cursor.fetchall()}
+            # {(main_char_id, period): {name, corp_id, bounty, ess}}
+            bounty = {
+                (r[0], r[3]): {
+                    "main_character_name": r[1],
+                    "corporation_id":      r[2],
+                    "bounty_isk":          r[4] or 0,
+                    "ess_isk":             r[5] or 0,
+                }
+                for r in cursor.fetchall()
+            }
 
         ore_isk_qs = (
             CharacterMonthlyOre.objects
@@ -857,23 +868,28 @@ def aggregate_character_monthly_summary(periods=None, full=False):
         all_keys = set(mining) | set(bounty)
         for key in all_keys:
             char_id, period = key
-            m            = mining.get(key, {})
-            b_isk, e_isk = bounty.get(key, (0, 0))
-            ore          = ore_isk.get(key, {})
+            m   = mining.get(key, {})
+            b   = bounty.get(key, {})
+            ore = ore_isk.get(key, {})
+
+            # Usar mining como fuente principal; bounty como fallback
+            # (un puro ratero no tiene fila en mining → corp_id y nombre vendrían vacíos)
+            char_name = m.get("main_character_name") or b.get("main_character_name", "")
+            corp_id   = m.get("corporation_id")      or b.get("corporation_id", 0)
 
             CharacterMonthlySummary.objects.update_or_create(
                 main_character_id=char_id,
                 period=period,
                 defaults={
-                    "main_character_name":    m.get("main_character_name", ""),
-                    "corporation_id":         m.get("corporation_id", 0),
+                    "main_character_name":    char_name,
+                    "corporation_id":         corp_id,
                     "mining_units":           m.get("mining_units", 0) or 0,
                     "mining_m3":              m.get("mining_m3", 0) or 0,
                     "mining_isk":             float(ore.get("total_isk",   0) or 0),
                     "mining_isk_compressed":  float(ore.get("total_isk_c", 0) or 0),
                     "mining_isk_reprocessed": float(ore.get("total_isk_r", 0) or 0),
-                    "bounty_isk":             b_isk,
-                    "ess_isk":                e_isk,
+                    "bounty_isk":             b.get("bounty_isk", 0),
+                    "ess_isk":                b.get("ess_isk",    0),
                 },
             )
 
@@ -1022,184 +1038,3 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                         done = True          # este y siguientes son demasiado viejos
                         break
 
-                    all_too_old = False
-
-                    if period not in periods:
-                        continue            # fuera del rango objetivo pero no demasiado viejo
-
-                    km_date = km_time[:10] if km_time else None  # "2026-06-07"
-                    victim_ship = esi.get("victim", {}).get("ship_type_id", 0)
-
-                    if kind == "losses":
-                        victim  = esi.get("victim", {})
-                        char_id = victim.get("character_id")
-                        if char_id and char_id in char_map:
-                            c   = char_map[char_id]
-                            key = (c["main_char_id"], period)
-                            agg[key]["main_char_name"] = c["main_char_name"]
-                            agg[key]["corporation_id"] = c["corporation_id"]
-                            agg[key]["ships_lost"]  += 1
-                            agg[key]["isk_lost"]    += value
-                            # registro individual — nave propia (víctima)
-                            own_ship = victim.get("ship_type_id", 0)
-                            CharacterKillRecord.objects.update_or_create(
-                                main_character_id=c["main_char_id"],
-                                killmail_id=km_id,
-                                defaults=dict(
-                                    main_character_name=c["main_char_name"],
-                                    period=period,
-                                    is_loss=True,
-                                    ship_type_id=own_ship,
-                                    ship_name=_esi_type_name(own_ship),
-                                    value_isk=value,
-                                    kill_date=km_date,
-                                    final_blow=False,
-                                    solo=False,
-                                ),
-                            )
-
-                    else:
-                        attackers  = esi.get("attackers", [])
-                        is_solo    = zkb.get("solo", False)
-                        max_dmg    = max((a.get("damage_done", 0) for a in attackers), default=0)
-                        for att in attackers:
-                            char_id = att.get("character_id")
-                            if not char_id or char_id not in char_map:
-                                continue
-                            c   = char_map[char_id]
-                            key = (c["main_char_id"], period)
-                            agg[key]["main_char_name"] = c["main_char_name"]
-                            agg[key]["corporation_id"] = c["corporation_id"]
-                            agg[key]["participations"]  += 1
-                            dmg = att.get("damage_done", 0)
-                            agg[key]["damage_dealt"]    += dmg
-                            got_final = att.get("final_blow", False)
-                            if got_final:
-                                agg[key]["ships_destroyed"] += 1
-                                agg[key]["isk_destroyed"]   += value
-                                agg[key]["final_blows"]     += 1
-                                if is_solo:
-                                    agg[key]["solo_kills"]  += 1
-                            elif dmg == max_dmg and max_dmg > 0:
-                                agg[key]["top_damage_kills"] += 1
-                            # registro individual — nave víctima
-                            CharacterKillRecord.objects.update_or_create(
-                                main_character_id=c["main_char_id"],
-                                killmail_id=km_id,
-                                defaults=dict(
-                                    main_character_name=c["main_char_name"],
-                                    period=period,
-                                    is_loss=False,
-                                    ship_type_id=victim_ship,
-                                    ship_name=_esi_type_name(victim_ship),
-                                    value_isk=value,
-                                    kill_date=km_date,
-                                    final_blow=got_final,
-                                    solo=is_solo and got_final,
-                                ),
-                            )
-
-                if all_too_old:
-                    done = True
-
-                page += 1
-                time.sleep(0.5)   # pausa entre páginas zkill
-
-            logger.info("koru fetch_pvp: corp=%s %s — %d páginas, %d calls ESI",
-                        corp_id, kind, page - 1, total_esi)
-
-    # ── Persistir ──
-    saved = 0
-    for (main_char_id, period), data in agg.items():
-        if not data["main_char_name"]:
-            continue
-        CharacterMonthlyPvp.objects.update_or_create(
-            main_character_id=main_char_id,
-            period=period,
-            defaults={
-                "main_character_name": data["main_char_name"],
-                "corporation_id":      data["corporation_id"],
-                "ships_destroyed":     data["ships_destroyed"],
-                "ships_lost":          data["ships_lost"],
-                "isk_destroyed":       round(data["isk_destroyed"], 2),
-                "isk_lost":            round(data["isk_lost"],      2),
-                "final_blows":         data["final_blows"],
-                "participations":      data["participations"],
-                "solo_kills":          data["solo_kills"],
-                "top_damage_kills":    data["top_damage_kills"],
-                "damage_dealt":        data["damage_dealt"],
-            },
-        )
-        saved += 1
-
-    logger.info("koru fetch_pvp DONE: %d registros guardados, %d calls ESI", saved, total_esi)
-    return saved
-
-
-def _zkill_get_single_page(url):
-    """Fetch una sola página de zkillboard. Devuelve lista o []."""""
-    try:
-        r = http_requests.get(url, headers=ZKILL_HEADERS, timeout=20)
-        if r.status_code == 429:
-            logger.warning("zkill 429 — esperando 60s")
-            time.sleep(60)
-            r = http_requests.get(url, headers=ZKILL_HEADERS, timeout=20)
-            if r.status_code == 429:
-                logger.warning("zkill 429 persistente — abortando")
-                return []
-        if r.status_code == 404:
-            return []
-        if r.status_code != 200 or not r.text.strip():
-            logger.warning("zkill_get_single_page %s status=%s", url, r.status_code)
-            return []
-        data = r.json()
-        if isinstance(data, dict) and "error" in data:
-            logger.warning("zkill error: %s", data["error"])
-            return []
-        return data if isinstance(data, list) else []
-    except Exception as exc:
-        logger.warning("zkill_get_single_page %s: %s", url, exc)
-        return []
-
-
-# Alias para compatibilidad con run_koru_aggregations
-aggregate_character_monthly_pvp = fetch_pvp_from_zkillboard
-
-
-# ---------------------------------------------------------------------------
-# Tarea coordinadora — esta es la que se schedula
-# ---------------------------------------------------------------------------
-
-@shared_task
-def run_koru_aggregations(full=False):
-    """
-    Ejecuta todas las agregaciones en orden correcto:
-      1. update_ore_prices   — fetch Fuzzwork
-      2. aggregate_ore       — ore por char/mes con los 3 ISK
-      3. aggregate_summary   — resumen (ISK desde CharacterMonthlyOre)
-      4. fetch_pvp           — PvP desde zKillboard API
-
-    Uso normal (diario): run_koru_aggregations.delay()
-    Poblacion inicial:   run_koru_aggregations(full=True)
-    """
-    logger.info("koru run_koru_aggregations START (full=%s)", full)
-
-    try:
-        n_prices = update_ore_prices()
-    except Exception as exc:
-        logger.error("koru run_koru_aggregations: update_ore_prices fallo: %s\n%s", exc, traceback.format_exc())
-        n_prices = 0
-
-    n_ore     = aggregate_character_monthly_ore(full=full)
-    n_summary = aggregate_character_monthly_summary(full=full)
-
-    try:
-        n_pvp = aggregate_character_monthly_pvp(full=full)
-    except Exception as exc:
-        logger.warning("koru run_koru_aggregations: PvP skipped: %s", exc)
-        n_pvp = 0
-
-    logger.info(
-        "koru run_koru_aggregations DONE — prices=%s, ore=%s, summary=%s, pvp=%s",
-        n_prices, n_ore, n_summary, n_pvp,
-    )

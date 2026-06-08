@@ -1079,7 +1079,7 @@ SQL_CORP_TOP_CONTRIBUIDORES = """
       AND wj.second_party_id != 98176563
     GROUP BY main_ec.id, main_ec.character_name, main_ec.character_id
     ORDER BY total_tax DESC
-    LIMIT 10
+    LIMIT 500
 """
 
 SQL_CORP_INGRESOS_DIARIOS = """
@@ -1108,7 +1108,7 @@ SQL_CORP_TOP_SISTEMAS = """
       AND wj.date >= %s AND wj.date < %s
     GROUP BY ms.system_id, ms.name, ms.security_status
     ORDER BY total_isk DESC
-    LIMIT 10
+    LIMIT 500
 """
 
 # Etiquetas legibles para ref_type

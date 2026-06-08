@@ -1247,6 +1247,10 @@ def corp_dashboard(request):
         "contribuidores":   _add_comparativa(contribuidores, contribuidores_ant, "total_tax"),
         "ingresos_diarios": ingresos_diarios,
         "top_sistemas":     top_sistemas,
+        "chart_top_sistemas": _to_json({
+            "labels": [r["sistema"] for r in top_sistemas[:10]],
+            "data":   [float(r["total_isk"] or 0) for r in top_sistemas[:10]],
+        }),
         "total_ingresos":   total_ingresos,
         "total_bounties_corp": total_bounties_corp,
         "total_donaciones":    total_donaciones,

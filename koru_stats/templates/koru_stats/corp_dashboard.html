@@ -294,6 +294,7 @@
                     {% if error_sistemas %}
                         <div class="aa-callout aa-callout-warning"><p class="mb-0">No se pudieron cargar los datos.</p></div>
                     {% elif top_sistemas %}
+                        <div class="chart-container mb-3"><canvas id="chartSistemas"></canvas></div>
                         <table class="table table-sm table-hover mb-0 align-middle" id="tblSistemas">
                             <thead class="table-dark">
                                 <tr>
@@ -523,6 +524,16 @@
             { label: 'Bounties', data: dataContrib.bounties, backgroundColor: contribColors.map(c => c + 'cc'), stack: 'total', borderRadius: 3 },
             { label: 'ESS',      data: dataContrib.ess,      backgroundColor: contribColors.map(c => c + '88'), stack: 'total', borderRadius: 3 },
         ]}, options: { ...baseOpts, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { callback: fmtISK } } }, plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + fmtISK(ctx.raw) + ' ISK' } } } } });
+    }
+
+    // Barras horizontales top sistemas de rateo
+    const dataSis = {{ chart_top_sistemas|safe }};
+    const ctxSis  = document.getElementById('chartSistemas');
+    if (ctxSis && dataSis.labels && dataSis.labels.length) {
+        const sisColors = dataSis.labels.map((_, i) => PALETTE[i % PALETTE.length]);
+        new Chart(ctxSis, { type: 'bar', data: { labels: dataSis.labels, datasets: [
+            { label: 'ISK Bounties', data: dataSis.data, backgroundColor: sisColors.map(c => c + 'cc'), borderRadius: 3 },
+        ]}, options: { ...baseOpts, indexAxis: 'y', scales: { x: { beginAtZero: true, ticks: { callback: fmtISK } }, y: { ticks: { font: { family: 'monospace', size: 11 } } } }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtISK(ctx.raw) + ' ISK' } } } } });
     }
 })();
 </script>

@@ -10,9 +10,16 @@ ORDEN DE EJECUCION (importante):
 SCHEDULE — anade esto a tu local.py:
 
     from celery.schedules import crontab
-    CELERYBEAT_SCHEDULE['koru-daily-aggregations'] = {
-        'task': 'koru_stats.tasks.run_koru_aggregations',
-        'schedule': crontab(hour=3, minute=0),
+
+    # Precios + ore + summary cada 6 horas (datos frescos durante el dia)
+    CELERYBEAT_SCHEDULE['koru-ore-and-summary'] = {
+        'task': 'koru_stats.tasks.run_koru_ore_and_summary',
+        'schedule': crontab(hour='*/6', minute=0),
+    }
+    # PvP una vez al dia (zkillboard API es lenta, no merece mas frecuencia)
+    CELERYBEAT_SCHEDULE['koru-daily-pvp'] = {
+        'task': 'koru_stats.tasks.aggregate_character_monthly_pvp',
+        'schedule': crontab(hour=3, minute=30),
     }
 
 POBLACION INICIAL — ejecuta esto UNA VEZ en el shell de Django:
@@ -1038,3 +1045,207 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                         done = True          # este y siguientes son demasiado viejos
                         break
 
+                    all_too_old = False
+
+                    if period not in periods:
+                        continue            # fuera del rango objetivo pero no demasiado viejo
+
+                    km_date = km_time[:10] if km_time else None  # "2026-06-07"
+                    victim_ship = esi.get("victim", {}).get("ship_type_id", 0)
+
+                    if kind == "losses":
+                        victim  = esi.get("victim", {})
+                        char_id = victim.get("character_id")
+                        if char_id and char_id in char_map:
+                            c   = char_map[char_id]
+                            key = (c["main_char_id"], period)
+                            agg[key]["main_char_name"] = c["main_char_name"]
+                            agg[key]["corporation_id"] = c["corporation_id"]
+                            agg[key]["ships_lost"]  += 1
+                            agg[key]["isk_lost"]    += value
+                            own_ship = victim.get("ship_type_id", 0)
+                            CharacterKillRecord.objects.update_or_create(
+                                main_character_id=c["main_char_id"],
+                                killmail_id=km_id,
+                                defaults=dict(
+                                    main_character_name=c["main_char_name"],
+                                    period=period,
+                                    is_loss=True,
+                                    ship_type_id=own_ship,
+                                    ship_name=_esi_type_name(own_ship),
+                                    value_isk=value,
+                                    kill_date=km_date,
+                                    final_blow=False,
+                                    solo=False,
+                                ),
+                            )
+
+                    else:
+                        attackers  = esi.get("attackers", [])
+                        is_solo    = zkb.get("solo", False)
+                        max_dmg    = max((a.get("damage_done", 0) for a in attackers), default=0)
+                        for att in attackers:
+                            char_id = att.get("character_id")
+                            if not char_id or char_id not in char_map:
+                                continue
+                            c   = char_map[char_id]
+                            key = (c["main_char_id"], period)
+                            agg[key]["main_char_name"] = c["main_char_name"]
+                            agg[key]["corporation_id"] = c["corporation_id"]
+                            agg[key]["participations"]  += 1
+                            dmg = att.get("damage_done", 0)
+                            agg[key]["damage_dealt"]    += dmg
+                            got_final = att.get("final_blow", False)
+                            if got_final:
+                                agg[key]["ships_destroyed"] += 1
+                                agg[key]["isk_destroyed"]   += value
+                                agg[key]["final_blows"]     += 1
+                                if is_solo:
+                                    agg[key]["solo_kills"]  += 1
+                            elif dmg == max_dmg and max_dmg > 0:
+                                agg[key]["top_damage_kills"] += 1
+                            CharacterKillRecord.objects.update_or_create(
+                                main_character_id=c["main_char_id"],
+                                killmail_id=km_id,
+                                defaults=dict(
+                                    main_character_name=c["main_char_name"],
+                                    period=period,
+                                    is_loss=False,
+                                    ship_type_id=victim_ship,
+                                    ship_name=_esi_type_name(victim_ship),
+                                    value_isk=value,
+                                    kill_date=km_date,
+                                    final_blow=got_final,
+                                    solo=is_solo and got_final,
+                                ),
+                            )
+
+                if all_too_old:
+                    done = True
+
+                page += 1
+                time.sleep(0.5)   # pausa entre páginas zkill
+
+            logger.info("koru fetch_pvp: corp=%s %s — %d páginas, %d calls ESI",
+                        corp_id, kind, page - 1, total_esi)
+
+    # ── Persistir ──
+    saved = 0
+    for (main_char_id, period), data in agg.items():
+        if not data["main_char_name"]:
+            continue
+        CharacterMonthlyPvp.objects.update_or_create(
+            main_character_id=main_char_id,
+            period=period,
+            defaults={
+                "main_character_name": data["main_char_name"],
+                "corporation_id":      data["corporation_id"],
+                "ships_destroyed":     data["ships_destroyed"],
+                "ships_lost":          data["ships_lost"],
+                "isk_destroyed":       round(data["isk_destroyed"], 2),
+                "isk_lost":            round(data["isk_lost"],      2),
+                "final_blows":         data["final_blows"],
+                "participations":      data["participations"],
+                "solo_kills":          data["solo_kills"],
+                "top_damage_kills":    data["top_damage_kills"],
+                "damage_dealt":        data["damage_dealt"],
+            },
+        )
+        saved += 1
+
+    logger.info("koru fetch_pvp DONE: %d registros guardados, %d calls ESI", saved, total_esi)
+    return saved
+
+
+def _zkill_get_single_page(url):
+    """Fetch una sola página de zkillboard. Devuelve lista o []."""
+    try:
+        r = http_requests.get(url, headers=ZKILL_HEADERS, timeout=20)
+        if r.status_code == 429:
+            logger.warning("zkill 429 — esperando 60s")
+            time.sleep(60)
+            r = http_requests.get(url, headers=ZKILL_HEADERS, timeout=20)
+            if r.status_code == 429:
+                logger.warning("zkill 429 persistente — abortando")
+                return []
+        if r.status_code == 404:
+            return []
+        if r.status_code != 200 or not r.text.strip():
+            logger.warning("zkill_get_single_page %s status=%s", url, r.status_code)
+            return []
+        data = r.json()
+        if isinstance(data, dict) and "error" in data:
+            logger.warning("zkill error: %s", data["error"])
+            return []
+        return data if isinstance(data, list) else []
+    except Exception as exc:
+        logger.warning("zkill_get_single_page %s: %s", url, exc)
+        return []
+
+
+# Alias para compatibilidad con run_koru_aggregations
+aggregate_character_monthly_pvp = fetch_pvp_from_zkillboard
+
+
+# ---------------------------------------------------------------------------
+# Tareas coordinadoras
+# ---------------------------------------------------------------------------
+
+@shared_task
+def run_koru_ore_and_summary(full=False):
+    """
+    Ejecuta solo precios + ore + summary (sin PvP).
+    Diseñada para ejecutarse cada 6 horas para mantener datos frescos.
+    """
+    logger.info("koru run_koru_ore_and_summary START (full=%s)", full)
+
+    try:
+        n_prices = update_ore_prices()
+    except Exception as exc:
+        logger.error("koru ore_and_summary: update_ore_prices fallo: %s\n%s", exc, traceback.format_exc())
+        n_prices = 0
+
+    n_ore     = aggregate_character_monthly_ore(full=full)
+    n_summary = aggregate_character_monthly_summary(full=full)
+
+    logger.info(
+        "koru run_koru_ore_and_summary DONE — prices=%s, ore=%s, summary=%s",
+        n_prices, n_ore, n_summary,
+    )
+    return n_summary
+
+
+@shared_task
+def run_koru_aggregations(full=False):
+    """
+    Ejecuta todas las agregaciones en orden correcto:
+      1. update_ore_prices   — fetch Fuzzwork
+      2. aggregate_ore       — ore por char/mes con los 3 ISK
+      3. aggregate_summary   — resumen (ISK desde CharacterMonthlyOre)
+      4. fetch_pvp           — PvP desde zKillboard API
+
+    Uso normal (diario): run_koru_aggregations.delay()
+    Poblacion inicial:   run_koru_aggregations(full=True)
+    """
+    logger.info("koru run_koru_aggregations START (full=%s)", full)
+
+    try:
+        n_prices = update_ore_prices()
+    except Exception as exc:
+        logger.error("koru run_koru_aggregations: update_ore_prices fallo: %s\n%s", exc, traceback.format_exc())
+        n_prices = 0
+
+    n_ore     = aggregate_character_monthly_ore(full=full)
+    n_summary = aggregate_character_monthly_summary(full=full)
+
+
+    try:
+        n_pvp = aggregate_character_monthly_pvp(full=full)
+    except Exception as exc:
+        logger.warning("koru run_koru_aggregations: PvP skipped: %s", exc)
+        n_pvp = 0
+
+    logger.info(
+        "koru run_koru_aggregations DONE — prices=%s, ore=%s, summary=%s, pvp=%s",
+        n_prices, n_ore, n_summary, n_pvp,
+    )

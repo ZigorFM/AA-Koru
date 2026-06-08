@@ -326,7 +326,7 @@ def _get_ice_data():
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT DISTINCT it.id, it.name, COALESCE(it.portionSize, 1) "
+                "SELECT DISTINCT it.id, it.name, COALESCE(it.portion_size, 1) "
                 "FROM eve_sde_itemtype it "
                 "JOIN eve_sde_itemgroup ig ON ig.id = it.group_id "
                 "WHERE ig.id = %s AND it.published = 1 "
@@ -390,6 +390,90 @@ def _get_ice_data():
             logger.error("koru _get_ice_data materials: %s", exc)
 
     return ice_types, ice_materials, compressed_map
+
+
+def _get_group_ids_by_names(group_names):
+    """Retorna {group_name: group_id} desde eve_sde_itemgroup."""
+    if not group_names:
+        return {}
+    ph = ",".join(["%s"] * len(group_names))
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, name FROM eve_sde_itemgroup WHERE name IN (" + ph + ")",
+                group_names
+            )
+            return {row[1]: int(row[0]) for row in cursor.fetchall()}
+    except Exception as exc:
+        logger.error("koru _get_group_ids_by_names: %s", exc)
+        return {}
+
+
+def _get_generic_resource_data(group_ids):
+    """
+    Retorna (raw_types, type_materials, compressed_map) para cualquier lista de group_ids.
+    Util para moon ore, gas, y otros recursos minables.
+
+    raw_types: [(type_id, type_name, portion_size), ...]  — excluye 'Compressed *'
+    type_materials: {type_id: [(mat_id, qty_per_unit), ...]}
+    compressed_map: {raw_type_id: compressed_type_id}
+    """
+    if not group_ids:
+        return [], {}, {}
+    ph = ",".join(["%s"] * len(group_ids))
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT it.id, it.name, COALESCE(it.portion_size, 1) "
+                "FROM eve_sde_itemtype it "
+                "WHERE it.group_id IN (" + ph + ") AND it.published = 1 "
+                "ORDER BY it.name",
+                group_ids
+            )
+            rows = cursor.fetchall()
+    except Exception as exc:
+        logger.error("koru _get_generic_resource_data: %s", exc)
+        return [], {}, {}
+
+    if not rows:
+        return [], {}, {}
+
+    all_types          = [(int(r[0]), r[1], int(r[2] or 1)) for r in rows]
+    raw_types          = [(tid, name, ps) for tid, name, ps in all_types
+                          if not name.startswith("Compressed ")]
+    compressed_by_name = {name: tid for tid, name, _ in all_types
+                          if name.startswith("Compressed ")}
+
+    compressed_map = {}
+    for tid, name, _ in raw_types:
+        comp_name = "Compressed " + name
+        if comp_name in compressed_by_name:
+            compressed_map[tid] = compressed_by_name[comp_name]
+
+    raw_ids        = [t[0] for t in raw_types]
+    portion_by_id  = {t[0]: t[2] for t in raw_types}
+    type_materials = {}
+
+    if raw_ids:
+        ph2 = ",".join(["%s"] * len(raw_ids))
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT item_type_id, material_item_type_id, quantity "
+                    "FROM eve_sde_itemtypematerials "
+                    "WHERE item_type_id IN (" + ph2 + ")",
+                    raw_ids
+                )
+                for ore_id, mat_id, qty in cursor.fetchall():
+                    ps = portion_by_id.get(ore_id, 1)
+                    if qty is None:
+                        continue
+                    qty_per_unit = float(qty) / max(ps, 1)
+                    type_materials.setdefault(ore_id, []).append((mat_id, qty_per_unit))
+        except Exception as exc:
+            logger.error("koru _get_generic_resource_data materials: %s", exc)
+
+    return raw_types, type_materials, compressed_map
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +575,67 @@ def update_ore_prices():
         logger.info("update_ore_prices: %d tipos de ice actualizados", len(ice_types))
     else:
         logger.warning("update_ore_prices: no se encontraron tipos de ice en SDE")
+
+    # --- Moon Ore ---
+    moon_group_ids = _get_group_ids_by_names([
+        "Ubiquitous Moon Asteroids", "Common Moon Asteroids",
+        "Uncommon Moon Asteroids", "Rare Moon Asteroids", "Exceptional Moon Asteroids",
+    ])
+    if moon_group_ids:
+        moon_types, moon_materials, moon_compressed_map = _get_generic_resource_data(
+            list(moon_group_ids.values())
+        )
+        if moon_types:
+            all_moon_ids = (
+                [tid for tid, _, _ in moon_types]
+                + list(moon_compressed_map.values())
+                + list({mat_id for mats in moon_materials.values() for mat_id, _ in mats})
+            )
+            moon_prices = _fetch_fuzzwork_prices(list(set(all_moon_ids)))
+            for m_id, m_name, portion_size in moon_types:
+                price_raw = moon_prices.get(m_id, {}).get("sell", 0)
+                comp_id = moon_compressed_map.get(m_id)
+                if comp_id and comp_id in moon_prices:
+                    price_compressed = moon_prices[comp_id].get("sell", 0) / max(portion_size, 1)
+                else:
+                    price_compressed = 0.0
+                price_reprocessed = sum(
+                    qty_per_unit * 0.85 * moon_prices.get(mat_id, {}).get("sell", 0)
+                    for mat_id, qty_per_unit in moon_materials.get(m_id, [])
+                )
+                OreMarketPrice.objects.update_or_create(
+                    type_id=m_id,
+                    defaults={
+                        "type_name":         m_name,
+                        "price_raw":         round(price_raw,         4),
+                        "price_compressed":  round(price_compressed,  4),
+                        "price_reprocessed": round(price_reprocessed, 4),
+                    },
+                )
+                saved += 1
+            logger.info("update_ore_prices: %d tipos de moon ore actualizados", len(moon_types))
+    else:
+        logger.warning("update_ore_prices: no se encontraron grupos de moon ore en SDE")
+
+    # --- Gas (Harvestable Cloud) ---
+    gas_group_ids = _get_group_ids_by_names(["Harvestable Cloud"])
+    if gas_group_ids:
+        gas_types, _, _ = _get_generic_resource_data(list(gas_group_ids.values()))
+        if gas_types:
+            gas_prices = _fetch_fuzzwork_prices([tid for tid, _, _ in gas_types])
+            for g_id, g_name, _ in gas_types:
+                price_raw = gas_prices.get(g_id, {}).get("sell", 0)
+                OreMarketPrice.objects.update_or_create(
+                    type_id=g_id,
+                    defaults={
+                        "type_name":         g_name,
+                        "price_raw":         round(price_raw, 4),
+                        "price_compressed":  0.0,
+                        "price_reprocessed": 0.0,
+                    },
+                )
+                saved += 1
+            logger.info("update_ore_prices: %d tipos de gas actualizados", len(gas_types))
 
     logger.info("update_ore_prices: %d tipos totales actualizados desde Fuzzwork", saved)
     return saved

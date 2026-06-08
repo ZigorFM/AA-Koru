@@ -666,13 +666,13 @@
         el.textContent = t > 0 ? Math.round(s / t * 100) + '%' : '—';
     });
 
-    // ── Tendencia corp ──
+    // ── Tendencia corp (tab Resumen — visible al cargar, init inmediato) ──
     const dataTend = {{ chart_tendencia_pvp|safe }};
     const ctxTend  = document.getElementById('chartTend');
     let chartTend  = null;
     const MODES = {
         ships: { label1:'Ships Killed', data1:dataTend.ships_destroyed, color1:'#10b981', label2:'Ships Lost', data2:dataTend.ships_lost, color2:'#ef4444' },
-        isk:   { label1:'ISK Dest.',    data1:dataTend.isk_destroyed ? dataTend.isk_destroyed.map(v=>v/1e9) : [], color1:'#10b981', label2:'ISK Perd.', data2:dataTend.isk_lost ? dataTend.isk_lost.map(v=>v/1e9) : [], color2:'#ef4444' },
+        isk:   { label1:'ISK Dest.',  data1:(dataTend.isk_destroyed||[]).map(v=>v/1e9), color1:'#10b981', label2:'ISK Perd.', data2:(dataTend.isk_lost||[]).map(v=>v/1e9), color2:'#ef4444' },
         part:  { label1:'Participaciones', data1:dataTend.participations, color1:'#8b5cf6', label2:'Solo Kills', data2:dataTend.solo_kills, color2:'#06b6d4' },
     };
     function buildTend(mode) {
@@ -704,58 +704,70 @@
         buildTend(mode);
     });
 
-    // ── Actividad diaria ──
-    const dataDaily = {{ chart_daily|safe }};
-    const ctxDaily  = document.getElementById('chartDaily');
-    if (ctxDaily && dataDaily.labels && dataDaily.labels.length) {
-        new Chart(ctxDaily, {
-            type: 'bar',
-            data: { labels: dataDaily.labels, datasets: [
-                { label:'Kills',  data:dataDaily.kills,  backgroundColor:'#10b98199', borderColor:'#10b981', borderWidth:1 },
-                { label:'Losses', data:dataDaily.losses, backgroundColor:'#ef444499', borderColor:'#ef4444', borderWidth:1 },
-            ]},
-            options: { responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{position:'bottom',labels:{boxWidth:12}} },
-                scales:{ x:{stacked:false}, y:{beginAtZero:true, ticks:{precision:0}} }
-            }
-        });
-    }
-
-    // ── Heatmap horas EVE ──
+    // ── Actividad: init lazy cuando el tab se muestra ──
+    const dataDaily  = {{ chart_daily|safe }};
     const dataHourly = {{ chart_hourly|safe }};
-    const ctxHourly  = document.getElementById('chartHourly');
-    if (ctxHourly && dataHourly.kills) {
-        const labels = Array.from({length:24}, (_,i) => i.toString().padStart(2,'0') + ':00');
-        new Chart(ctxHourly, {
-            type: 'bar',
-            data: { labels: labels, datasets: [
-                { label:'Kills',  data:dataHourly.kills,  backgroundColor:'#10b98199', borderColor:'#10b981', borderWidth:1 },
-                { label:'Losses', data:dataHourly.losses, backgroundColor:'#ef444499', borderColor:'#ef4444', borderWidth:1 },
-            ]},
-            options: { responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{position:'bottom',labels:{boxWidth:12}},
-                          tooltip:{callbacks:{title:t=>'EVE '+t[0].label+' UTC'}} },
-                scales:{ x:{stacked:true, ticks:{maxRotation:90,font:{size:10}}}, y:{beginAtZero:true, ticks:{precision:0}} }
-            }
-        });
+    let actividadInit = false;
+    function initActividad() {
+        if (actividadInit) return;
+        actividadInit = true;
+        const ctxDaily = document.getElementById('chartDaily');
+        if (ctxDaily && dataDaily.labels && dataDaily.labels.length) {
+            new Chart(ctxDaily, {
+                type: 'bar',
+                data: { labels: dataDaily.labels, datasets: [
+                    { label:'Kills',  data:dataDaily.kills,  backgroundColor:'#10b98199', borderColor:'#10b981', borderWidth:1 },
+                    { label:'Losses', data:dataDaily.losses, backgroundColor:'#ef444499', borderColor:'#ef4444', borderWidth:1 },
+                ]},
+                options: { responsive:true, maintainAspectRatio:false,
+                    plugins:{ legend:{position:'bottom',labels:{boxWidth:12}} },
+                    scales:{ x:{stacked:false}, y:{beginAtZero:true, ticks:{precision:0}} }
+                }
+            });
+        }
+        const ctxHourly = document.getElementById('chartHourly');
+        if (ctxHourly && dataHourly.kills && dataHourly.kills.some(v=>v>0)) {
+            const hlabels = Array.from({length:24}, (_,i) => i.toString().padStart(2,'0')+':00');
+            new Chart(ctxHourly, {
+                type: 'bar',
+                data: { labels: hlabels, datasets: [
+                    { label:'Kills',  data:dataHourly.kills,  backgroundColor:'#10b98199', borderColor:'#10b981', borderWidth:1 },
+                    { label:'Losses', data:dataHourly.losses, backgroundColor:'#ef444499', borderColor:'#ef4444', borderWidth:1 },
+                ]},
+                options: { responsive:true, maintainAspectRatio:false,
+                    plugins:{ legend:{position:'bottom',labels:{boxWidth:12}},
+                              tooltip:{callbacks:{title:t=>'EVE '+t[0].label+' UTC'}} },
+                    scales:{ x:{stacked:true, ticks:{maxRotation:90,font:{size:10}}}, y:{beginAtZero:true, ticks:{precision:0}} }
+                }
+            });
+        }
     }
+    const tabActBtn = document.querySelector('[data-bs-target="#tabActividad"]');
+    if (tabActBtn) tabActBtn.addEventListener('shown.bs.tab', initActividad);
 
-    // ── Gráfica piloto ──
+    // ── Piloto: init lazy + también init si el tab ya es activo al cargar ──
     const dataPilot = {{ chart_pilot_monthly|safe }};
-    const ctxPilot  = document.getElementById('chartPilot');
-    if (ctxPilot && dataPilot.labels && dataPilot.labels.length) {
-        new Chart(ctxPilot, {
-            type: 'line',
-            data: { labels: dataPilot.labels, datasets: [
-                { label:'Kills',  data:dataPilot.kills,  borderColor:'#10b981', backgroundColor:'#10b98122', tension:.3, fill:true, pointRadius:4 },
-                { label:'Losses', data:dataPilot.losses, borderColor:'#ef4444', backgroundColor:'#ef444422', tension:.3, fill:true, pointRadius:4 },
-            ]},
-            options: { responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{position:'bottom',labels:{boxWidth:12}} },
-                scales:{ y:{beginAtZero:true, ticks:{precision:0}} }
-            }
-        });
+    let pilotChartInit = false;
+    function initPilotChart() {
+        if (pilotChartInit) return;
+        pilotChartInit = true;
+        const ctxPilot = document.getElementById('chartPilot');
+        if (ctxPilot && dataPilot.labels && dataPilot.labels.length) {
+            new Chart(ctxPilot, {
+                type: 'line',
+                data: { labels: dataPilot.labels, datasets: [
+                    { label:'Kills',  data:dataPilot.kills,  borderColor:'#10b981', backgroundColor:'#10b98122', tension:.3, fill:true, pointRadius:4 },
+                    { label:'Losses', data:dataPilot.losses, borderColor:'#ef4444', backgroundColor:'#ef444422', tension:.3, fill:true, pointRadius:4 },
+                ]},
+                options: { responsive:true, maintainAspectRatio:false,
+                    plugins:{ legend:{position:'bottom',labels:{boxWidth:12}} },
+                    scales:{ y:{beginAtZero:true, ticks:{precision:0}} }
+                }
+            });
+        }
     }
+    const tabPilBtn = document.querySelector('[data-bs-target="#tabPiloto"]');
+    if (tabPilBtn) tabPilBtn.addEventListener('shown.bs.tab', initPilotChart);
 
     // ── Autocomplete piloto ──
     const PILOTS = [
@@ -769,13 +781,20 @@
         inp.addEventListener('input', () => {
             const q = inp.value.trim().toLowerCase();
             sugg.innerHTML = '';
-            if (q.length < 2) { sugg.style.display='none'; return; }
-            const matches = PILOTS.filter(p => p.name.toLowerCase().includes(q)).slice(0, 10);
+            if (q.length < 1) { sugg.style.display='none'; return; }
+            const matches = PILOTS.filter(p => p.name.toLowerCase().includes(q)).slice(0, 12);
             if (!matches.length) { sugg.style.display='none'; return; }
             matches.forEach(p => {
                 const li = document.createElement('li');
                 li.className = 'list-group-item list-group-item-action py-1 d-flex align-items-center gap-2';
-                li.innerHTML = '<img src="https://images.evetech.net/characters/'+p.id+'/portrait?size=32" width="24" height="24" class="rounded-circle" onerror="this.style.display='none'"><span>'+p.name+'</span>';
+                const img = document.createElement('img');
+                img.src = 'https://images.evetech.net/characters/'+p.id+'/portrait?size=32';
+                img.width = 24; img.height = 24;
+                img.className = 'rounded-circle';
+                img.onerror = function(){ this.style.display='none'; };
+                const span = document.createElement('span');
+                span.textContent = p.name;
+                li.appendChild(img); li.appendChild(span);
                 li.addEventListener('click', () => {
                     inp.value = p.name;
                     sugg.style.display = 'none';
@@ -791,10 +810,14 @@
             if (!inp.contains(e.target) && !sugg.contains(e.target)) sugg.style.display='none';
         });
 
-        // Activar tab Piloto si hay ?pilot= en la URL
+        // Activar tab Piloto si hay ?pilot= en la URL (y re-init chart si hace falta)
         if (new URLSearchParams(window.location.search).has('pilot')) {
             const tab = document.querySelector('[data-bs-target="#tabPiloto"]');
-            if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+            if (tab) {
+                bootstrap.Tab.getOrCreateInstance(tab).show();
+                // shown.bs.tab puede no dispararse si el tab ya está activo al cargar
+                setTimeout(initPilotChart, 100);
+            }
         }
     }
 })();

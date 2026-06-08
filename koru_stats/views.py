@@ -2592,10 +2592,29 @@ def _pvp_hourly_activity(corp_ids, period):
 
 
 def _pvp_pilot_list(corp_ids):
-    """Lista de pilotos (main chars) de la corp con datos PvP — para autocomplete."""
+    """Lista de pilotos (main chars) de la corp con datos PvP — para autocomplete.
+    Usa CharacterKillRecord como fuente primaria (siempre tiene datos tras fetch_pvp).
+    Fallback a CharacterMonthlyPvp si no hay kill records.
+    """
     char_ids = list(_get_corp_main_char_ids(corp_ids))
     if not char_ids:
         return []
+    # Fuente primaria: CharacterKillRecord (se rellena antes que los agregados)
+    rows = list(
+        CharacterKillRecord.objects
+        .filter(main_character_id__in=char_ids)
+        .exclude(main_character_name="")
+        .values("main_character_id", "main_character_name")
+        .distinct()
+        .order_by("main_character_name")
+    )
+    if rows:
+        # Dedup por main_character_id (puede haber duplicados con distinto nombre)
+        seen = {}
+        for r in rows:
+            seen.setdefault(r["main_character_id"], r)
+        return sorted(seen.values(), key=lambda x: x["main_character_name"])
+    # Fallback
     return list(
         CharacterMonthlyPvp.objects
         .filter(corporation_id__in=corp_ids)

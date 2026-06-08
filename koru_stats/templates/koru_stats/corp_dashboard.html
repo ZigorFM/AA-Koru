@@ -587,14 +587,15 @@
                 plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } },
                     tooltip: { callbacks: { label: ctx => '
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+(function(){
     function paginate(tableId, pagDivId, pageSize) {
         var tbody = document.querySelector('#' + tableId + ' tbody');
-        if (!tbody) return;
+        if (!tbody) { console.warn('paginate: no tbody for', tableId); return; }
         var rows = Array.from(tbody.querySelectorAll('tr'));
+        console.log('paginate', tableId, 'rows:', rows.length);
         if (rows.length <= pageSize) return;
         var pagDiv = document.getElementById(pagDivId);
-        if (!pagDiv) return;
+        if (!pagDiv) { console.warn('paginate: no pagDiv', pagDivId); return; }
         var page = 0;
         var totalPages = Math.ceil(rows.length / pageSize);
         function render() {
@@ -614,6 +615,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     paginate('tblContrib',  'pagContrib',  10);
     paginate('tblSistemas', 'pagSistemas', 10);
-});
+})();
 </script>
 {% endblock %}

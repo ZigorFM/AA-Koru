@@ -315,6 +315,153 @@
   </div>
 </div>
 
+{# ── Top Enemigos ── #}
+{% if top_enemies.corps or top_enemies.pilotos %}
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-transparent border-0 pb-0">
+                <h6 class="mb-0"><i class="fas fa-building text-danger me-2"></i>Top Corps Enemigas <small class="text-muted">({{ periodo_sel }})</small></h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead><tr><th>Corporaci&oacute;n</th><th class="text-end">Kills</th><th class="text-end">ISK destruido</th></tr></thead>
+                    <tbody>
+                    {% for e in top_enemies.corps %}
+                    <tr>
+                        <td>
+                            <img src="https://images.evetech.net/corporations/{{ e.enemy_corp_id }}/logo?size=32"
+                                 class="rounded me-2" width="24" height="24"
+                                 onerror="this.style.display='none'">
+                            {{ e.enemy_corp_name|default:e.enemy_corp_id }}
+                        </td>
+                        <td class="text-end fw-semibold text-danger">{{ e.kills }}</td>
+                        <td class="text-end text-muted small">{{ e.isk_destruido|floatformat:0 }} ISK</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="3" class="text-center text-muted py-3">Sin datos este per&iacute;odo</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-transparent border-0 pb-0">
+                <h6 class="mb-0"><i class="fas fa-user-ninja text-danger me-2"></i>Top Pilotos Enemigos <small class="text-muted">({{ periodo_sel }})</small></h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead><tr><th>Piloto</th><th class="text-end">Kills</th><th class="text-end">ISK destruido</th></tr></thead>
+                    <tbody>
+                    {% for e in top_enemies.pilotos %}
+                    <tr>
+                        <td>
+                            <img src="https://images.evetech.net/characters/{{ e.enemy_char_id }}/portrait?size=32"
+                                 class="rounded-circle me-2" width="24" height="24"
+                                 onerror="this.style.display='none'">
+                            <a href="https://zkillboard.com/character/{{ e.enemy_char_id }}/" target="_blank"
+                               class="text-decoration-none">{{ e.enemy_char_name|default:e.enemy_char_id }}</a>
+                        </td>
+                        <td class="text-end fw-semibold text-danger">{{ e.kills }}</td>
+                        <td class="text-end text-muted small">{{ e.isk_destruido|floatformat:0 }} ISK</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="3" class="text-center text-muted py-3">Sin datos este per&iacute;odo</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Kill Feed #}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-transparent border-0 pb-0 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <h6 class="mb-0"><i class="fas fa-crosshairs me-2"></i>Kill Feed <small class="text-muted">({{ periodo_sel }})</small></h6>
+                <div>
+                    <button class="btn btn-sm btn-outline-secondary me-1" onclick="filtrarFeed('all')">Todos</button>
+                    <button class="btn btn-sm btn-outline-success me-1" onclick="filtrarFeed('kill')">Kills</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="filtrarFeed('loss')">Losses</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0" id="killFeedTable">
+                        <thead>
+                            <tr>
+                                <th></th><th>Piloto</th><th>Nave</th><th>Tipo</th>
+                                <th>Enemigo</th><th class="text-end">Valor ISK</th><th>Fecha</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for km in kill_feed %}
+                        <tr class="km-row {% if km.is_loss %}km-loss{% else %}km-kill{% endif %}">
+                            <td style="width:36px">
+                                <img src="https://images.evetech.net/types/{{ km.ship_type_id }}/render?size=32"
+                                     width="32" height="32" class="rounded"
+                                     onerror="this.src='https://images.evetech.net/types/0/render?size=32'">
+                            </td>
+                            <td>
+                                <img src="https://images.evetech.net/characters/{{ km.main_character_id }}/portrait?size=32"
+                                     class="rounded-circle me-1" width="20" height="20"
+                                     onerror="this.style.display='none'">
+                                {{ km.main_character_name }}
+                            </td>
+                            <td class="text-muted small">{{ km.ship_name|default:"&mdash;" }}</td>
+                            <td>
+                                {% if km.is_loss %}
+                                    <span class="badge bg-danger">Loss</span>
+                                {% else %}
+                                    <span class="badge bg-success">Kill</span>
+                                    {% if km.solo %}<span class="badge bg-warning text-dark ms-1">Solo</span>{% endif %}
+                                    {% if km.final_blow %}<span class="badge bg-info ms-1">FB</span>{% endif %}
+                                {% endif %}
+                            </td>
+                            <td class="small text-muted">
+                                {% if km.is_loss and km.enemy_char_name %}
+                                    {{ km.enemy_char_name }}
+                                    {% if km.enemy_corp_name %}<br><span style="font-size:.75em">{{ km.enemy_corp_name }}</span>{% endif %}
+                                {% else %}&mdash;{% endif %}
+                            </td>
+                            <td class="text-end fw-semibold {% if km.is_loss %}text-danger{% else %}text-success{% endif %}">
+                                {{ km.value_isk|floatformat:0 }}
+                            </td>
+                            <td class="text-muted small">{{ km.kill_date|default:"&mdash;" }}</td>
+                            <td>
+                                <a href="https://zkillboard.com/kill/{{ km.killmail_id }}/" target="_blank"
+                                   class="btn btn-outline-secondary" style="font-size:.75em;padding:1px 6px">zKill</a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="8" class="text-center text-muted py-4">Sin killmails para este per&iacute;odo</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% if kf_has_prev or kf_has_next %}
+            <div class="card-footer bg-transparent d-flex justify-content-between align-items-center">
+                {% if kf_has_prev %}
+                <a href="?{{ request.GET.urlencode }}&kf_page={{ kf_page|add:"-1" }}"
+                   class="btn btn-sm btn-outline-secondary">&laquo; Anterior</a>
+                {% else %}<span></span>{% endif %}
+                <small class="text-muted">P&aacute;gina {{ kf_page }}</small>
+                {% if kf_has_next %}
+                <a href="?{{ request.GET.urlencode }}&kf_page={{ kf_page|add:"1" }}"
+                   class="btn btn-sm btn-outline-secondary">Siguiente &raquo;</a>
+                {% else %}<span></span>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
 </div>{# /container #}
 {% endblock %}
 
@@ -387,5 +534,15 @@
         buildTend(mode);
     });
 })();
+</script>
+
+<script>
+function filtrarFeed(tipo) {
+    document.querySelectorAll('#killFeedTable .km-row').forEach(tr => {
+        if (tipo === 'all') tr.style.display = '';
+        else if (tipo === 'kill') tr.style.display = tr.classList.contains('km-kill') ? '' : 'none';
+        else if (tipo === 'loss') tr.style.display = tr.classList.contains('km-loss') ? '' : 'none';
+    });
+}
 </script>
 {% endblock %}

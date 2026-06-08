@@ -1232,26 +1232,11 @@ def corp_dashboard(request):
         if r["ref_type"] == "industry_job_tax"
     )
 
-    # Kill feed y top enemigos
-    corp_ids_tracked = list(TrackedCorporation.objects.filter(is_active=True).values_list("corporation_id", flat=True))
-    kill_feed   = []
-    top_enemies = {"corps": [], "pilotos": []}
-    try:
-        kill_feed = _corp_kill_feed(corp_ids_tracked, limit=50)
-    except Exception as e:
-        logger.error("koru_stats kill_feed: %s", e)
-    try:
-        top_enemies = _summary_top_enemies(corp_ids_tracked, periodo_sel)
-    except Exception as e:
-        logger.error("koru_stats top_enemies: %s", e)
-
     context = {
         "mes":              date(anio, mes, 1).strftime("%B %Y"),
         "periodo_sel":      periodo_sel,
         **selector_ctx,
         "corp_names":       corp_names,
-        "kill_feed":        kill_feed,
-        "top_enemies":      top_enemies,
         "corp_ingresos_cat": corp_ingresos_cat,
         "corp_gastos_cat":   corp_gastos_cat,
         "total_ingresos_cat":     sum(c["total"] for c in corp_ingresos_cat),
@@ -2249,10 +2234,45 @@ def pvp_dashboard(request):
     except Exception:
         pass
 
+    # Kill feed paginado + top enemigos
+    KF_PAGE_SIZE = 25
+    kf_page      = max(1, int(request.GET.get("kf_page", 1)))
+    kill_feed    = []
+    top_enemies  = {"corps": [], "pilotos": []}
+    kf_has_next  = False
+    kf_has_prev  = kf_page > 1
+    try:
+        char_ids = list(_get_corp_main_char_ids(corp_ids))
+        if char_ids:
+            qs_feed = (CharacterKillRecord.objects
+                       .filter(main_character_id__in=char_ids, period=periodo_sel)
+                       .order_by("-kill_date", "-killmail_id"))
+            offset      = (kf_page - 1) * KF_PAGE_SIZE
+            kill_feed   = list(qs_feed[offset:offset + KF_PAGE_SIZE + 1].values(
+                "killmail_id", "main_character_name", "main_character_id",
+                "is_loss", "ship_type_id", "ship_name", "value_isk",
+                "kill_date", "final_blow", "solo",
+                "enemy_char_name", "enemy_corp_name",
+            ))
+            kf_has_next = len(kill_feed) > KF_PAGE_SIZE
+            kill_feed   = kill_feed[:KF_PAGE_SIZE]
+    except Exception as e:
+        logger.error("koru_stats pvp kill_feed: %s", e)
+    try:
+        top_enemies = _summary_top_enemies(corp_ids, periodo_sel)
+    except Exception as e:
+        logger.error("koru_stats pvp top_enemies: %s", e)
+
     context = {
         "mes":                date(anio, mes, 1).strftime("%B %Y"),
+        "periodo_sel":        periodo_sel,
         **selector_ctx,
         "corp_names":         corp_names,
+        "kill_feed":          kill_feed,
+        "top_enemies":        top_enemies,
+        "kf_page":            kf_page,
+        "kf_has_next":        kf_has_next,
+        "kf_has_prev":        kf_has_prev,
         "top_isk_destroyed":  top_isk_destroyed,
         "top_ships_killed":   top_ships_killed,
         "top_final_blows":    top_final_blows,

@@ -14,6 +14,8 @@ class General(models.Model):
             ("moon_tax_admin",      "Puede gestionar tax de lunas"),
             ("pvp_access",          "Puede ver estadísticas PvP detalladas"),
             ("fc_access",           "Puede ver panel FC/Director"),
+            ("auditor_access",      "Puede ver el panel Auditor (seguridad)"),
+            ("auditor_admin",       "Puede configurar el Auditor y revisar/descartar alertas"),
         )
 
 
@@ -309,3 +311,131 @@ class CharacterKillRecord(models.Model):
     @property
     def ship_image_url(self):
         return f"https://images.evetech.net/types/{self.ship_type_id}/render?size=64"
+
+
+# ---------------------------------------------------------------------------
+# Auditor — detección de patrones/comportamiento (Fase 1)
+# ---------------------------------------------------------------------------
+
+class AuditorConfig(models.Model):
+    """Umbrales, pesos y listas de standings — singleton por 'tag'."""
+    tag = models.CharField(max_length=50, default="default", unique=True)
+
+    # Pesos de dimensión (0–1, idealmente suman 1) — prioridad al comportamiento
+    w_pvp        = models.DecimalField(max_digits=4, decimal_places=2, default=0.25)
+    w_ciclo      = models.DecimalField(max_digits=4, decimal_places=2, default=0.20)
+    w_espias     = models.DecimalField(max_digits=4, decimal_places=2, default=0.20)
+    w_fuga       = models.DecimalField(max_digits=4, decimal_places=2, default=0.15)
+    w_huecos     = models.DecimalField(max_digits=4, decimal_places=2, default=0.10)
+    w_financiero = models.DecimalField(max_digits=4, decimal_places=2, default=0.10)
+
+    # Umbrales de nivel (0–100)
+    umbral_amarillo = models.IntegerField(default=30)
+    umbral_naranja  = models.IntegerField(default=60)
+    umbral_rojo     = models.IntegerField(default=80)
+
+    # Parámetros de señales
+    token_stale_dias     = models.IntegerField(default=7,  help_text="Días sin sync de wallet/assets = token stale")
+    inactividad_dias     = models.IntegerField(default=14, help_text="Días sin last_known_login = inactivo")
+    donacion_externa_min = models.BigIntegerField(default=500_000_000, help_text="ISK mínimo de donación externa para señal")
+
+    # Standings — cacheados por sync_blue_standings() desde los States del core de AA
+    blue_alliance_ids  = models.JSONField(default=list, blank=True)  # State "Aliados"
+    blue_corp_ids      = models.JSONField(default=list, blank=True)
+    own_alliance_ids   = models.JSONField(default=list, blank=True)  # States propios (Miembros/Academy)
+    own_corp_ids       = models.JSONField(default=list, blank=True)
+    # IDs de States a considerar (configurable de cara a plugin)
+    blue_state_ids     = models.JSONField(default=list, blank=True)  # p.ej. [7]
+    own_state_ids      = models.JSONField(default=list, blank=True)  # p.ej. [2, 4]
+
+    # Assets/staging (se usa en Fase 2)
+    staging_location_ids = models.JSONField(default=list, blank=True)
+
+    # Calibración: True = sin push a Discord (solo dashboard)
+    modo_calibracion  = models.BooleanField(default=True)
+    calibracion_hasta = models.DateField(null=True, blank=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Configuración del Auditor"
+        verbose_name_plural = "Configuración del Auditor"
+
+    def __str__(self):
+        modo = "CALIBRACIÓN" if self.modo_calibracion else "ACTIVO"
+        return f"AuditorConfig[{self.tag}] — {modo}"
+
+
+class AuditorRiskScore(models.Model):
+    """Score de riesgo por personaje principal por periodo, recalculado por Celery."""
+    main_character_id   = models.IntegerField(db_index=True)
+    main_character_name = models.CharField(max_length=100)
+    corporation_id      = models.IntegerField(db_index=True, default=0)
+    period              = models.CharField(max_length=7, db_index=True)  # YYYY-MM
+
+    score_pvp        = models.IntegerField(default=0)
+    score_ciclo      = models.IntegerField(default=0)
+    score_espias     = models.IntegerField(default=0)
+    score_fuga       = models.IntegerField(default=0)
+    score_huecos     = models.IntegerField(default=0)
+    score_financiero = models.IntegerField(default=0)
+    risk_total       = models.IntegerField(default=0, db_index=True)
+    nivel            = models.CharField(max_length=10, default="verde")  # verde/amarillo/naranja/rojo
+
+    detalle     = models.JSONField(default=dict, blank=True)  # señales disparadas + valores
+    computed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Score de riesgo (Auditor)"
+        verbose_name_plural = "Scores de riesgo (Auditor)"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["main_character_id", "period"],
+                name="unique_auditor_score",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["period", "risk_total"],     name="koru_aud_period_risk"),
+            models.Index(fields=["period", "corporation_id"], name="koru_aud_period_corp"),
+        ]
+
+    def __str__(self):
+        return f"{self.main_character_name} | {self.period} | {self.risk_total} ({self.nivel})"
+
+
+class AuditorAlert(models.Model):
+    """Evento de alerta — el 'aviso' que se revisa y se acusa de recibo."""
+    main_character_id   = models.IntegerField(db_index=True)
+    main_character_name = models.CharField(max_length=100)
+    period    = models.CharField(max_length=7, db_index=True)
+    familia   = models.CharField(max_length=20)   # pvp/ciclo/espias/fuga/huecos/financiero
+    codigo    = models.CharField(max_length=50)   # p.ej. "token_caido"
+    severidad = models.CharField(max_length=10, default="warn")  # info/warn/critico
+    titulo    = models.CharField(max_length=200)
+    detalle   = models.JSONField(default=dict, blank=True)
+    estado    = models.CharField(max_length=15, default="abierta", db_index=True)  # abierta/revisada/descartada
+
+    revisada_por  = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="auditor_alerts_revisadas",
+    )
+    revisada_at   = models.DateTimeField(null=True, blank=True)
+    nota_revision = models.TextField(blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name        = "Alerta del Auditor"
+        verbose_name_plural = "Alertas del Auditor"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["main_character_id", "period", "codigo"],
+                name="unique_auditor_alert_period_code",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["estado", "severidad"], name="koru_alert_estado_sev"),
+        ]
+
+    def __str__(self):
+        return f"[{self.severidad}] {self.main_character_name} | {self.codigo} | {self.estado}"

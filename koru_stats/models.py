@@ -290,6 +290,10 @@ class CharacterKillRecord(models.Model):
     enemy_corp_name     = models.CharField(max_length=255, default="", blank=True)
     # Hora EVE (UTC) del killmail — para heatmap de actividad
     kill_hour           = models.SmallIntegerField(null=True, blank=True)  # 0-23
+    # Datos de la víctima (en KILLS: para detectar awox = matar a propio/blue)
+    victim_corp_id      = models.IntegerField(null=True, blank=True, db_index=True)
+    victim_corp_name    = models.CharField(max_length=255, default="", blank=True)
+    victim_alliance_id  = models.IntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         verbose_name        = "Registro killmail"
@@ -439,3 +443,92 @@ class AuditorAlert(models.Model):
 
     def __str__(self):
         return f"[{self.severidad}] {self.main_character_name} | {self.codigo} | {self.estado}"
+
+
+# ---------------------------------------------------------------------------
+# Auditor — Fase 2: precios generales, snapshots y ciclo de vida
+# ---------------------------------------------------------------------------
+
+class KoruMarketPrice(models.Model):
+    """Precio de mercado general por type_id (CCP ESI /markets/prices/ o Fuzzwork).
+    Sustituye a eveuniverse_evemarketprice para valorar assets de cualquier tipo."""
+    type_id        = models.IntegerField(unique=True, db_index=True)
+    type_name      = models.CharField(max_length=255, default="", blank=True)
+    average_price  = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    adjusted_price = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Precio de mercado (Koru)"
+        verbose_name_plural = "Precios de mercado (Koru)"
+
+    def __str__(self):
+        return f"{self.type_id} — {self.average_price}"
+
+
+class CharacterValueSnapshot(models.Model):
+    """Foto diaria de patrimonio (assets) y balance líquido por personaje.
+    Base de las señales de liquidación / caída de patrimonio (Financiero/Fuga)."""
+    character_id      = models.IntegerField(db_index=True)   # eveonline_evecharacter.character_id (EVE)
+    main_character_id = models.IntegerField(db_index=True)
+    snapshot_date     = models.DateField(db_index=True)
+    asset_value       = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    wallet_balance    = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    item_count        = models.BigIntegerField(default=0)
+
+    class Meta:
+        verbose_name        = "Snapshot de patrimonio"
+        verbose_name_plural = "Snapshots de patrimonio"
+        constraints = [
+            models.UniqueConstraint(fields=["character_id", "snapshot_date"],
+                                    name="unique_value_snapshot"),
+        ]
+        indexes = [
+            models.Index(fields=["main_character_id", "snapshot_date"], name="koru_valsnap_main_date"),
+        ]
+
+    def __str__(self):
+        return f"{self.character_id} | {self.snapshot_date} | {self.asset_value}"
+
+
+class CharacterOwnershipSnapshot(models.Model):
+    """Foto diaria de ownership — al comparar días detecta PJ borrados y cambios de main."""
+    snapshot_date     = models.DateField(db_index=True)
+    character_id      = models.IntegerField(db_index=True)   # EVE character_id
+    character_name    = models.CharField(max_length=100, default="")
+    main_character_id = models.IntegerField(default=0)
+    corporation_id    = models.IntegerField(default=0)
+
+    class Meta:
+        verbose_name        = "Snapshot de ownership"
+        verbose_name_plural = "Snapshots de ownership"
+        constraints = [
+            models.UniqueConstraint(fields=["snapshot_date", "character_id"],
+                                    name="unique_ownership_snapshot"),
+        ]
+
+    def __str__(self):
+        return f"{self.snapshot_date} | {self.character_id}"
+
+
+class CharacterLifecycleEvent(models.Model):
+    """Evento de ciclo de vida derivado del diff de ownership / estados."""
+    character_id      = models.IntegerField(db_index=True)
+    character_name    = models.CharField(max_length=100, default="")
+    main_character_id = models.IntegerField(db_index=True, default=0)
+    evento  = models.CharField(max_length=30)  # entro_corp/salio_corp/borrado_auth/cambio_main
+    fecha   = models.DateTimeField(db_index=True)
+    estado_anterior = models.CharField(max_length=50, blank=True, default="")
+    estado_nuevo    = models.CharField(max_length=50, blank=True, default="")
+    notas   = models.TextField(blank=True, default="")
+
+    class Meta:
+        verbose_name        = "Evento de ciclo de vida"
+        verbose_name_plural = "Eventos de ciclo de vida"
+        ordering = ["-fecha"]
+        indexes = [
+            models.Index(fields=["main_character_id", "fecha"], name="koru_lifecycle_main"),
+        ]
+
+    def __str__(self):
+        return f"{self.fecha:%Y-%m-%d} | {self.character_name} | {self.evento}"

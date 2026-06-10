@@ -201,15 +201,26 @@
         else
             L.push(['Espías', dims[2], (d.losses || 0) + ' pérdidas (mínimo 3 para evaluar concentración).']);
         // PvP (idx 0)
-        if (d.isk_efficiency !== undefined) {
+        var pvpTxt;
+        if (d.awox_kills) {
+            pvpTxt = '⚠️ <b>AWOX</b>: ' + d.awox_kills + ' kill(s) contra corp propia/blue. Revisar con prioridad.';
+        } else if (d.isk_efficiency !== undefined) {
             var pl = (d.ships_lost !== undefined) ? d.ships_lost : '?';
-            L.push(['PvP', dims[0], 'Eficiencia ISK <b>' + d.isk_efficiency + '%</b>, <b>' + pl + '</b> naves perdidas. Solo puntúa con 3+ pérdidas sostenidas (feeding); el awox real llega en Fase 2.']);
+            pvpTxt = 'Eficiencia ISK <b>' + d.isk_efficiency + '%</b>, <b>' + pl + '</b> naves perdidas. Solo puntúa con 3+ pérdidas sostenidas (feeding).';
         } else {
-            L.push(['PvP', dims[0], 'Sin actividad PvP relevante en el periodo.']);
+            pvpTxt = 'Sin actividad PvP relevante en el periodo.';
         }
-        // Ciclo (idx 1) y Financiero (idx 5)
-        L.push(['Ciclo de vida', dims[1], 'Pendiente — llega en Fase 2/3 (entradas/salidas/borrado de PJ).']);
-        L.push(['Financiero', dims[5], 'Pendiente — llega en Fase 2.']);
+        L.push(['PvP', dims[0], pvpTxt]);
+        // Ciclo de vida (idx 1)
+        if (d.eventos_ciclo && d.eventos_ciclo.length)
+            L.push(['Ciclo de vida', dims[1], 'Eventos en el periodo: <b>' + d.eventos_ciclo.join(', ') + '</b>.']);
+        else
+            L.push(['Ciclo de vida', dims[1], 'Sin eventos de entrada/salida/borrado en el periodo.']);
+        // Financiero (idx 5)
+        var finTxt = [];
+        if (d.donacion_externa) finTxt.push('Donación a externos: <b>' + (d.donacion_externa/1e6).toFixed(0) + 'M ISK</b>.');
+        if (d.caida_patrimonio_pct) finTxt.push('Caída de patrimonio: <b>' + d.caida_patrimonio_pct + '%</b>.');
+        L.push(['Financiero', dims[5], finTxt.length ? finTxt.join(' ') : 'Sin movimientos financieros anómalos detectados.']);
         return L;
     }
     document.querySelectorAll('#heatBody tr.heat-row').forEach(function(tr) {

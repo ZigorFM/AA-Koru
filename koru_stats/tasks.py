@@ -1099,6 +1099,11 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                         attackers  = esi.get("attackers", [])
                         is_solo    = zkb.get("solo", False)
                         max_dmg    = max((a.get("damage_done", 0) for a in attackers), default=0)
+                        victim     = esi.get("victim", {})
+                        v_corp     = victim.get("corporation_id")
+                        v_alli     = victim.get("alliance_id")
+                        if v_corp:
+                            pending_names.add(v_corp)
                         for att in attackers:
                             char_id = att.get("character_id")
                             if not char_id or char_id not in char_map:
@@ -1133,6 +1138,8 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
                                     kill_hour=km_hour,
                                     final_blow=got_final,
                                     solo=is_solo and got_final,
+                                    victim_corp_id=v_corp,
+                                    victim_alliance_id=v_alli,
                                 ),
                             )
 
@@ -1185,6 +1192,19 @@ def fetch_pvp_from_zkillboard(periods=None, full=False):
         if bulk:
             CharacterKillRecord.objects.bulk_update(bulk, ["enemy_char_name", "enemy_corp_name"])
             logger.info("koru fetch_pvp: %d enemy names actualizados", len(bulk))
+
+        # victim_corp_name en kills (para awox / display)
+        vrecs = CharacterKillRecord.objects.filter(
+            victim_corp_id__in=ids_with_names, is_loss=False,
+        ).only("id", "victim_corp_id", "victim_corp_name")
+        vbulk = []
+        for rec in vrecs:
+            if rec.victim_corp_id in name_map and not rec.victim_corp_name:
+                rec.victim_corp_name = name_map[rec.victim_corp_id][0]
+                vbulk.append(rec)
+        if vbulk:
+            CharacterKillRecord.objects.bulk_update(vbulk, ["victim_corp_name"])
+            logger.info("koru fetch_pvp: %d victim corp names actualizados", len(vbulk))
 
     # ── Persistir ──
     saved = 0
@@ -1437,14 +1457,16 @@ def sync_blue_standings():
 
 @shared_task
 def compute_auditor_scores(periods=None, full=False):
-    """Calcula scores de riesgo por main/periodo.
+    """Calcula scores de riesgo por main/periodo — 6 dimensiones (Fase 2).
 
-    F1 dims: PvP, Espías (del periodo) + Fuga, Huecos (estado ACTUAL).
-    Fuga/Huecos solo puntúan en el periodo en curso; en periodos pasados
-    el riesgo se calcula solo con las dimensiones de comportamiento (PvP, Espías).
+    Por periodo: PvP (feeding + awox), Espías, Ciclo de vida, Financiero (donación externa).
+    Solo estado actual (periodo en curso): Fuga, Huecos, y caída de patrimonio (parte de Financiero).
     """
     from collections import defaultdict
-    from .models import AuditorConfig, AuditorRiskScore, CharacterMonthlyPvp, CharacterKillRecord
+    from datetime import datetime, date
+    from django.db.models import Sum as _Sum
+    from .models import (AuditorConfig, AuditorRiskScore, CharacterMonthlyPvp,
+                         CharacterKillRecord, CharacterValueSnapshot, CharacterLifecycleEvent)
 
     corp_ids = _get_active_corp_ids()
     if not corp_ids:
@@ -1455,12 +1477,16 @@ def compute_auditor_scores(periods=None, full=False):
     cfg, _ = AuditorConfig.objects.get_or_create(tag="default")
     stale_days = int(cfg.token_stale_dias or 7)
     inact_days = max(1, int(cfg.inactividad_dias or 14))
+    don_min = int(cfg.donacion_externa_min or 500_000_000)
+    own_corp  = set(cfg.own_corp_ids or []) | set(corp_ids)
+    blue_corp = set(cfg.blue_corp_ids or [])
+    blue_alli = set(cfg.blue_alliance_ids or [])
+    own_alli  = set(cfg.own_alliance_ids or [])
+    awox_corps = own_corp | blue_corp
+    awox_allis = own_alli | blue_alli
     ph = ",".join(["%s"] * len(corp_ids))
 
-    # Salud de visibilidad + último login + corp por main (estado ACTUAL, no del periodo)
-    #   n_blind = personajes sin audit o con wallet sin sincronizar > stale_days
-    #             (token caducado/revocado = perdimos visibilidad).
-    #   OJO: la columna 'active' de corptools NO indica salud de token (91% es 0 aunque sincronicen).
+    # --- Salud de visibilidad + login por main (estado ACTUAL) ---
     with connection.cursor() as c:
         c.execute(
             "SELECT main_ec.character_id, MAX(main_ec.character_name), MAX(main_ec.corporation_id), "
@@ -1484,24 +1510,91 @@ def compute_auditor_scores(periods=None, full=False):
                 "dias_login": (int(r[6]) if r[6] is not None else None),
             }
     main_ids = list(base.keys())
-    saved = 0
 
+    # --- IDs a excluir de "donación externa" (miembros + corps propias/blue) ---
+    with connection.cursor() as c:
+        c.execute(f"SELECT character_id FROM eveonline_evecharacter WHERE corporation_id IN ({ph})", corp_ids)
+        member_ids = set(r[0] for r in c.fetchall())
+    excl_ids = list(member_ids | own_corp | blue_corp)
+
+    saved = 0
     for period in periods:
         is_current = (period == current_period)
+        y, m = int(period[:4]), int(period[5:7])
+        inicio = date(y, m, 1)
+        fin = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+
         pvp = {p.main_character_id: p for p in CharacterMonthlyPvp.objects.filter(period=period)}
+
+        # Espías: concentración de losses ante corps de jugadores
         loss_by_main = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))
         for mid, ecorp, isk in CharacterKillRecord.objects.filter(
                 period=period, is_loss=True, main_character_id__in=main_ids
         ).values_list("main_character_id", "enemy_corp_id", "value_isk"):
             if not ecorp:
-                continue  # muertes sin corp enemiga (NPC/no resuelto) no cuentan para concentracion
+                continue
             cell = loss_by_main[mid][ecorp]
             cell[0] += 1
             cell[1] += float(isk or 0)
 
+        # Awox: kills contra corp propia / blue
+        awox_by_main = defaultdict(int)
+        if awox_corps or awox_allis:
+            for mid, vcorp, valli in CharacterKillRecord.objects.filter(
+                    period=period, is_loss=False, main_character_id__in=main_ids
+            ).values_list("main_character_id", "victim_corp_id", "victim_alliance_id"):
+                if (vcorp and vcorp in awox_corps) or (valli and valli in awox_allis):
+                    awox_by_main[mid] += 1
+
+        # Ciclo de vida: eventos del periodo
+        ciclo_by_main = defaultdict(list)
+        for ev, mid in CharacterLifecycleEvent.objects.filter(
+                fecha__gte=inicio, fecha__lt=fin, main_character_id__in=main_ids
+        ).values_list("evento", "main_character_id"):
+            ciclo_by_main[mid].append(ev)
+
+        # Financiero: donación externa por main en el periodo
+        don_by_main = {}
+        if excl_ids:
+            ph_excl = ",".join(["%s"] * len(excl_ids))
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT main_ec.character_id, SUM(ABS(wj.amount)) "
+                    "FROM corptools_characterwalletjournalentry wj "
+                    "JOIN corptools_characteraudit cau ON cau.id = wj.character_id "
+                    "JOIN eveonline_evecharacter ec ON ec.id = cau.character_id "
+                    "JOIN authentication_characterownership co ON co.character_id = ec.id "
+                    "JOIN authentication_userprofile up ON up.user_id = co.user_id "
+                    "JOIN eveonline_evecharacter main_ec ON main_ec.id = up.main_character_id "
+                    "WHERE wj.ref_type = 'player_donation' AND wj.amount < 0 "
+                    "AND wj.date >= %s AND wj.date < %s "
+                    f"AND ec.corporation_id IN ({ph}) "
+                    f"AND wj.second_party_id NOT IN ({ph_excl}) "
+                    "GROUP BY main_ec.character_id",
+                    [inicio, fin] + corp_ids + excl_ids)
+                for mid, tot in c.fetchall():
+                    don_by_main[mid] = float(tot or 0)
+
+        # Caída de patrimonio (solo periodo en curso): dos últimos snapshots
+        caida_by_main = {}
+        if is_current:
+            snap_dates = list(CharacterValueSnapshot.objects.values_list(
+                "snapshot_date", flat=True).distinct().order_by("-snapshot_date")[:2])
+            if len(snap_dates) == 2:
+                d_new, d_old = snap_dates[0], snap_dates[1]
+                new_v = {r["main_character_id"]: r["v"] for r in CharacterValueSnapshot.objects
+                         .filter(snapshot_date=d_new).values("main_character_id").annotate(v=_Sum("asset_value"))}
+                old_v = {r["main_character_id"]: r["v"] for r in CharacterValueSnapshot.objects
+                         .filter(snapshot_date=d_old).values("main_character_id").annotate(v=_Sum("asset_value"))}
+                for mid, ov in old_v.items():
+                    ov = float(ov or 0)
+                    nv = float(new_v.get(mid, 0) or 0)
+                    if ov > 1_000_000_000 and nv < ov:
+                        caida_by_main[mid] = (ov - nv) / ov
+
         for mid, info in base.items():
             det = {}
-            # FUGA (estado actual — solo puntúa en el periodo en curso)
+            # FUGA (estado actual)
             if is_current:
                 dias = info["dias_login"]
                 if dias is None:
@@ -1512,7 +1605,7 @@ def compute_auditor_scores(periods=None, full=False):
                     det["dias_sin_login"] = dias
             else:
                 score_fuga = 0
-            # HUECOS (estado actual — solo puntúa en el periodo en curso)
+            # HUECOS (estado actual)
             n_chars = info["n_chars"] or 1
             if is_current:
                 score_huecos = _auditor_clamp(100 * info["n_blind"] / n_chars)
@@ -1520,7 +1613,7 @@ def compute_auditor_scores(periods=None, full=False):
                 det["n_chars"] = info["n_chars"]
             else:
                 score_huecos = 0
-            # ESPÍAS (del periodo)
+            # ESPÍAS
             enemy = loss_by_main.get(mid, {})
             total_losses = sum(v[0] for v in enemy.values())
             if total_losses >= 3:
@@ -1534,36 +1627,62 @@ def compute_auditor_scores(periods=None, full=False):
             else:
                 score_espias = 0
                 det["losses"] = total_losses
-            # PvP (feeding) — solo con pérdidas SOSTENIDAS (>=3) y baja eficiencia.
-            # Una pérdida puntual no es señal; el feeding/awox real llega en Fase 2 (victim_corp).
+            # PvP (feeding sostenido + AWOX)
+            awox = awox_by_main.get(mid, 0)
             p = pvp.get(mid)
+            score_feed = 0
             if p:
                 eff = p.isk_efficiency
                 act = float(p.isk_destroyed) + float(p.isk_lost)
                 if p.ships_lost >= 3 and act >= 100_000_000:
-                    score_pvp = _auditor_clamp((50 - eff) * 2)
-                else:
-                    score_pvp = 0
+                    score_feed = _auditor_clamp((50 - eff) * 2)
                 det["isk_efficiency"] = round(eff, 1)
                 det["ships_lost"] = p.ships_lost
+            if awox > 0:
+                score_pvp = 100
+                det["awox_kills"] = awox
             else:
-                score_pvp = 0
-            # Ciclo y financiero: aún no calculados en F1
-            score_ciclo = 0
-            score_financiero = 0
-            # Total renormalizado sobre las dimensiones activas del periodo
-            w_pvp = float(cfg.w_pvp); w_esp = float(cfg.w_espias)
-            w_fug = float(cfg.w_fuga); w_hue = float(cfg.w_huecos)
+                score_pvp = score_feed
+            # CICLO DE VIDA
+            evs = ciclo_by_main.get(mid, [])
+            if evs:
+                sc = 0
+                if "borrado_auth" in evs:
+                    sc = max(sc, 80)
+                if "salio_corp" in evs:
+                    sc = max(sc, 70)
+                rot = sum(1 for e in evs if e in ("entro_corp", "salio_corp", "cambio_corp"))
+                if rot >= 2:
+                    sc = max(sc, 60)
+                if "cambio_main" in evs:
+                    sc = max(sc, 40)
+                score_ciclo = _auditor_clamp(sc)
+                det["eventos_ciclo"] = evs
+            else:
+                score_ciclo = 0
+            # FINANCIERO (donación externa + caída de patrimonio)
+            don = don_by_main.get(mid, 0)
+            score_fin = 0
+            if don >= don_min:
+                score_fin = _auditor_clamp(50 + 50 * min(1.0, (don / don_min - 1) / 4))
+                det["donacion_externa"] = round(don)
+            caida = caida_by_main.get(mid, 0)
+            if caida:
+                det["caida_patrimonio_pct"] = round(caida * 100, 1)
+                score_fin = max(score_fin, _auditor_clamp(caida * 120))
+            score_financiero = score_fin
+
+            # Total renormalizado sobre dimensiones activas del periodo
+            w = dict(pvp=float(cfg.w_pvp), ciclo=float(cfg.w_ciclo), espias=float(cfg.w_espias),
+                     fuga=float(cfg.w_fuga), huecos=float(cfg.w_huecos), financiero=float(cfg.w_financiero))
+            sc_d = dict(pvp=score_pvp, ciclo=score_ciclo, espias=score_espias,
+                        fuga=score_fuga, huecos=score_huecos, financiero=score_financiero)
             if is_current:
-                sw = (w_pvp + w_esp + w_fug + w_hue) or 1
-                risk = (w_pvp * score_pvp + w_esp * score_espias +
-                        w_fug * score_fuga + w_hue * score_huecos) / sw
-                dims_act = ["pvp", "espias", "fuga", "huecos"]
+                active = ["pvp", "ciclo", "espias", "fuga", "huecos", "financiero"]
             else:
-                sw = (w_pvp + w_esp) or 1
-                risk = (w_pvp * score_pvp + w_esp * score_espias) / sw
-                dims_act = ["pvp", "espias"]
-            risk = _auditor_clamp(risk)
+                active = ["pvp", "ciclo", "espias", "financiero"]
+            sw = sum(w[d] for d in active) or 1
+            risk = _auditor_clamp(sum(w[d] * sc_d[d] for d in active) / sw)
             if risk >= cfg.umbral_rojo:
                 nivel = "rojo"
             elif risk >= cfg.umbral_naranja:
@@ -1572,7 +1691,7 @@ def compute_auditor_scores(periods=None, full=False):
                 nivel = "amarillo"
             else:
                 nivel = "verde"
-            det["_dims_activas"] = dims_act
+            det["_dims_activas"] = active
             det["_periodo_actual"] = is_current
             AuditorRiskScore.objects.update_or_create(
                 main_character_id=mid, period=period,
@@ -1599,7 +1718,9 @@ def emit_auditor_alerts(periods=None):
         ("score_huecos",  "huecos",  "cobertura",            "Cobertura/tokens del piloto en riesgo"),
         ("score_fuga",    "fuga",    "inactividad",          "Caída de actividad / posible fuga"),
         ("score_espias",  "espias",  "concentracion_enemigo","Pérdidas concentradas ante una corp"),
-        ("score_pvp",     "pvp",     "pvp_anomalo",          "Comportamiento PvP anómalo"),
+        ("score_pvp",     "pvp",     "pvp_anomalo",          "Comportamiento PvP anómalo (incl. awox)"),
+        ("score_ciclo",     "ciclo",      "ciclo_vida",  "Evento de ciclo de vida (salida/borrado/rotación)"),
+        ("score_financiero","financiero", "financiero",  "Movimiento financiero anómalo (donación/liquidación)"),
     ]
     for s in AuditorRiskScore.objects.filter(period__in=periods):
         for field, fam, code, titulo in dims:
@@ -1621,17 +1742,172 @@ def emit_auditor_alerts(periods=None):
 
 @shared_task
 def run_auditor_pipeline(full=False):
-    """Pipeline diario del Auditor: standings -> scores -> alertas."""
+    """Pipeline del Auditor: precios -> standings -> snapshots -> ciclo -> scores -> alertas."""
     logger.info("koru run_auditor_pipeline START (full=%s)", full)
-    try:
-        sync_blue_standings()
-    except Exception as exc:
-        logger.error("koru auditor sync_blue_standings: %s\n%s", exc, traceback.format_exc())
+
+    def _safe(fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as exc:
+            logger.error("koru auditor %s: %s\n%s", fn.__name__, exc, traceback.format_exc())
+            return None
+
+    _safe(update_market_prices)
+    _safe(sync_blue_standings)
+    _safe(snapshot_character_values)
+    _safe(snapshot_ownership)
+    _safe(detect_lifecycle_events)
     n_scores = compute_auditor_scores(full=full)
-    try:
-        n_alerts = emit_auditor_alerts()
-    except Exception as exc:
-        logger.error("koru auditor emit_auditor_alerts: %s", exc)
-        n_alerts = 0
+    n_alerts = _safe(emit_auditor_alerts) or 0
     logger.info("koru run_auditor_pipeline DONE — scores=%s alerts=%s", n_scores, n_alerts)
     return {"scores": n_scores, "alerts": n_alerts}
+
+
+# ===========================================================================
+# AUDITOR Fase 2 — precios propios, snapshots y ciclo de vida
+# ===========================================================================
+
+@shared_task
+def update_market_prices():
+    """Puebla KoruMarketPrice desde CCP ESI /markets/prices/ (todos los type_id en una llamada).
+    Sustituto self-contained de eveuniverse_evemarketprice."""
+    from .models import KoruMarketPrice
+    url = f"{ESI_BASE}/markets/prices/"
+    try:
+        resp = http_requests.get(url, headers=ESI_HEADERS, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logger.error("koru update_market_prices: %s", exc)
+        return 0
+    n = 0
+    for row in data:
+        tid = row.get("type_id")
+        if not tid:
+            continue
+        KoruMarketPrice.objects.update_or_create(
+            type_id=tid,
+            defaults=dict(
+                average_price=row.get("average_price") or 0,
+                adjusted_price=row.get("adjusted_price") or 0,
+            ),
+        )
+        n += 1
+    logger.info("koru update_market_prices: %s precios", n)
+    return n
+
+
+@shared_task
+def snapshot_character_values():
+    """Foto diaria de patrimonio (assets * precio) + balance líquido por personaje en corps rastreadas."""
+    from datetime import date
+    from .models import CharacterValueSnapshot
+    corp_ids = _get_active_corp_ids()
+    if not corp_ids:
+        return 0
+    ph = ",".join(["%s"] * len(corp_ids))
+    today = date.today()
+    with connection.cursor() as c:
+        c.execute(
+            "SELECT ec.character_id AS char_eve, "
+            "       MAX(main_ec.character_id) AS main_eve, "
+            "       MAX(cau.balance) AS balance, "
+            "       COALESCE(SUM(ca.quantity * COALESCE(kp.average_price, 0)), 0) AS asset_value, "
+            "       COUNT(ca.id) AS item_count "
+            "FROM eveonline_evecharacter ec "
+            "JOIN authentication_characterownership co ON co.character_id = ec.id "
+            "JOIN authentication_userprofile up ON up.user_id = co.user_id "
+            "JOIN eveonline_evecharacter main_ec ON main_ec.id = up.main_character_id "
+            "LEFT JOIN corptools_characteraudit cau ON cau.character_id = ec.id "
+            "LEFT JOIN corptools_characterasset ca ON ca.character_id = cau.id "
+            "LEFT JOIN koru_stats_korumarketprice kp ON kp.type_id = ca.type_id "
+            f"WHERE ec.corporation_id IN ({ph}) "
+            "GROUP BY ec.character_id", corp_ids)
+        rows = c.fetchall()
+    n = 0
+    for char_eve, main_eve, balance, asset_value, item_count in rows:
+        CharacterValueSnapshot.objects.update_or_create(
+            character_id=char_eve, snapshot_date=today,
+            defaults=dict(
+                main_character_id=main_eve or 0,
+                asset_value=asset_value or 0,
+                wallet_balance=balance or 0,
+                item_count=item_count or 0,
+            ),
+        )
+        n += 1
+    logger.info("koru snapshot_character_values: %s personajes", n)
+    return n
+
+
+@shared_task
+def snapshot_ownership():
+    """Foto diaria del ownership de TODOS los personajes registrados (para detectar borrados/cambios)."""
+    from datetime import date
+    from .models import CharacterOwnershipSnapshot
+    today = date.today()
+    CharacterOwnershipSnapshot.objects.filter(snapshot_date=today).delete()
+    objs = []
+    with connection.cursor() as c:
+        c.execute(
+            "SELECT ec.character_id, ec.character_name, "
+            "       COALESCE(main_ec.character_id, 0), COALESCE(ec.corporation_id, 0) "
+            "FROM authentication_characterownership co "
+            "JOIN eveonline_evecharacter ec ON ec.id = co.character_id "
+            "JOIN authentication_userprofile up ON up.user_id = co.user_id "
+            "LEFT JOIN eveonline_evecharacter main_ec ON main_ec.id = up.main_character_id")
+        for cid, cname, mid, corp in c.fetchall():
+            objs.append(CharacterOwnershipSnapshot(
+                snapshot_date=today, character_id=cid, character_name=cname or "",
+                main_character_id=mid or 0, corporation_id=corp or 0))
+    CharacterOwnershipSnapshot.objects.bulk_create(objs, batch_size=500)
+    logger.info("koru snapshot_ownership: %s registros", len(objs))
+    return len(objs)
+
+
+@shared_task
+def detect_lifecycle_events():
+    """Compara el ownership de hoy con el snapshot previo y registra eventos de ciclo de vida."""
+    from datetime import date, datetime
+    from .models import CharacterOwnershipSnapshot, CharacterLifecycleEvent
+    today = date.today()
+    prev_dates = list(
+        CharacterOwnershipSnapshot.objects.filter(snapshot_date__lt=today)
+        .values_list("snapshot_date", flat=True).distinct().order_by("-snapshot_date"))
+    if not prev_dates:
+        logger.info("koru detect_lifecycle_events: sin snapshot previo (primera ejecución)")
+        return 0
+    prev = prev_dates[0]
+    cur = {r.character_id: r for r in CharacterOwnershipSnapshot.objects.filter(snapshot_date=today)}
+    old = {r.character_id: r for r in CharacterOwnershipSnapshot.objects.filter(snapshot_date=prev)}
+    corp_ids = set(_get_active_corp_ids())
+    now = datetime.now()
+    created = 0
+
+    def add(cid, cname, mid, evento, ant, nuevo, notas=""):
+        nonlocal created
+        CharacterLifecycleEvent.objects.create(
+            character_id=cid, character_name=cname or "", main_character_id=mid or 0,
+            evento=evento, fecha=now, estado_anterior=str(ant), estado_nuevo=str(nuevo), notas=notas)
+        created += 1
+
+    # Borrados (estaba en el snapshot previo, ya no está)
+    for cid, o in old.items():
+        if cid not in cur:
+            add(cid, o.character_name, o.main_character_id, "borrado_auth",
+                "registrado", "ausente", "El personaje ya no está vinculado en Auth")
+    # Cambios de corp / main
+    for cid, n in cur.items():
+        o = old.get(cid)
+        if not o:
+            continue
+        if o.corporation_id != n.corporation_id:
+            entro = n.corporation_id in corp_ids and o.corporation_id not in corp_ids
+            salio = o.corporation_id in corp_ids and n.corporation_id not in corp_ids
+            ev = "entro_corp" if entro else ("salio_corp" if salio else "cambio_corp")
+            add(cid, n.character_name, n.main_character_id, ev, o.corporation_id, n.corporation_id)
+        if o.main_character_id != n.main_character_id and n.main_character_id:
+            add(cid, n.character_name, n.main_character_id, "cambio_main",
+                o.main_character_id, n.main_character_id)
+    logger.info("koru detect_lifecycle_events: %s eventos (prev=%s)", created, prev)
+    return created

@@ -6,6 +6,8 @@ from allianceauth.eveonline.models import EveCorporationInfo
 from .models import (
     TrackedCorporation, MoonTaxConfig, MoonTaxPayment,
     AuditorConfig, AuditorRiskScore, AuditorAlert,
+    KoruMarketPrice, CharacterValueSnapshot,
+    CharacterOwnershipSnapshot, CharacterLifecycleEvent,
 )
 
 
@@ -203,3 +205,46 @@ class AuditorAlertAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False  # Las crea la task
+
+
+@admin.register(KoruMarketPrice)
+class KoruMarketPriceAdmin(admin.ModelAdmin):
+    list_display  = ("type_id", "type_name", "average_price", "adjusted_price", "updated_at")
+    search_fields = ("type_id", "type_name")
+    ordering      = ("type_id",)
+
+    def has_add_permission(self, request):
+        return False  # La puebla la task
+
+
+@admin.register(CharacterValueSnapshot)
+class CharacterValueSnapshotAdmin(admin.ModelAdmin):
+    list_display  = ("snapshot_date", "character_id", "main_character_id", "asset_value", "wallet_balance", "item_count")
+    list_filter   = ("snapshot_date",)
+    search_fields = ("character_id", "main_character_id")
+    ordering      = ("-snapshot_date",)
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(CharacterOwnershipSnapshot)
+class CharacterOwnershipSnapshotAdmin(admin.ModelAdmin):
+    list_display  = ("snapshot_date", "character_id", "character_name", "main_character_id", "corporation_id")
+    list_filter   = ("snapshot_date",)
+    search_fields = ("character_id", "character_name")
+    ordering      = ("-snapshot_date",)
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(CharacterLifecycleEvent)
+class CharacterLifecycleEventAdmin(admin.ModelAdmin):
+    list_display  = ("fecha", "evento", "character_name", "main_character_id", "estado_anterior", "estado_nuevo")
+    list_filter   = ("evento",)
+    search_fields = ("character_name", "character_id")
+    ordering      = ("-fecha",)
+
+    def has_add_permission(self, request):
+        return False

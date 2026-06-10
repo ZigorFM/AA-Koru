@@ -2681,3 +2681,59 @@ def _pvp_pilot_stats(main_char_id, n_months=6):
     )
 
     return {"monthly": monthly, "summary": summary, "feed": feed}
+
+
+# ---------------------------------------------------------------------------
+# Auditor — dashboard (Fase 1: Tab Semáforo)
+# ---------------------------------------------------------------------------
+
+@permission_required("koru_stats.auditor_access")
+def auditor_dashboard(request):
+    from .models import AuditorConfig, AuditorRiskScore, AuditorAlert
+
+    periodos = list(
+        AuditorRiskScore.objects.values_list("period", flat=True)
+        .distinct().order_by("-period")
+    )
+    sel = request.GET.get("periodo", "")
+    if sel not in periodos:
+        sel = periodos[0] if periodos else _parse_periodo(request)[4]
+
+    scores = list(AuditorRiskScore.objects.filter(period=sel).order_by("-risk_total"))
+
+    DIMS = [
+        ("score_pvp", "PvP"), ("score_ciclo", "Ciclo"), ("score_espias", "Espías"),
+        ("score_fuga", "Fuga"), ("score_huecos", "Huecos"), ("score_financiero", "Financ."),
+    ]
+    rows = []
+    dist = {"verde": 0, "amarillo": 0, "naranja": 0, "rojo": 0}
+    for s in scores:
+        dist[s.nivel] = dist.get(s.nivel, 0) + 1
+        rows.append({
+            "id": s.main_character_id,
+            "name": s.main_character_name,
+            "total": s.risk_total,
+            "nivel": s.nivel,
+            "dims": [getattr(s, f) for f, _ in DIMS],
+            "detalle": s.detalle or {},
+        })
+
+    top = [{"name": r["name"], "total": r["total"], "nivel": r["nivel"]} for r in rows[:15]]
+    cfg = AuditorConfig.objects.filter(tag="default").first()
+
+    context = {
+        "periodos": periodos,
+        "periodo_sel": sel,
+        "dim_labels": [l for _, l in DIMS],
+        "rows": rows,
+        "rows_json": _to_json(rows),
+        "dim_labels_json": _to_json([l for _, l in DIMS]),
+        "dist": dist,
+        "dist_json": _to_json(dist),
+        "top_json": _to_json(top),
+        "total_miembros": len(rows),
+        "modo_calibracion": cfg.modo_calibracion if cfg else True,
+        "calibracion_hasta": cfg.calibracion_hasta if cfg else None,
+        "alerts_abiertas": AuditorAlert.objects.filter(estado="abierta").count(),
+    }
+    return render(request, "koru_stats/auditor_dashboard.html", context)

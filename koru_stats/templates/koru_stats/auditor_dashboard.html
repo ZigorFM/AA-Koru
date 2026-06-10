@@ -1,0 +1,197 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Auditor{% endblock %}
+
+{% block page_title %}
+    {% translate "Panel Auditor" as page_header %}
+    {% translate "Detección de patrones y comportamiento (señales, no veredictos)" as optional_subtitle %}
+    {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:dashboard" as url_dash %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_dash title="Dashboard" fa_icon="fa-solid fa-chart-bar" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.kpi-card { border-radius:10px; }
+.kpi-card .kpi-val { font-size:2rem; font-weight:700; line-height:1; }
+.kpi-card .kpi-lbl { font-size:.75rem; opacity:.75; margin-top:4px; }
+.lvl-verde    { background:#10b981; color:#fff; }
+.lvl-amarillo { background:#f59e0b; color:#111; }
+.lvl-naranja  { background:#f97316; color:#fff; }
+.lvl-rojo     { background:#ef4444; color:#fff; }
+.badge-lvl { font-weight:700; }
+.heat-table { font-size:.85rem; }
+.heat-table th { white-space:nowrap; text-align:center; }
+.heat-table td.heat { text-align:center; font-weight:600; color:#111; min-width:54px; border-radius:4px; }
+.heat-table td.name { white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+.heat-table tr:hover { outline:1px solid rgba(255,255,255,.15); }
+.calib-banner { border-left:4px solid #f59e0b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+    {% if modo_calibracion %}
+    <div class="alert alert-warning calib-banner d-flex align-items-center" role="alert">
+        <i class="fas fa-flask me-2"></i>
+        <div>
+            <strong>Modo calibración</strong> — el Auditor calcula y muestra señales, pero
+            <strong>no envía avisos a Discord</strong>{% if calibracion_hasta %} hasta el {{ calibracion_hasta }}{% endif %}.
+            Ajusta umbrales y pesos en el admin mientras observas falsos positivos.
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+        <form method="get" action="" class="d-flex align-items-center gap-2 mb-0">
+            <label class="text-muted small mb-0">Periodo</label>
+            <select name="periodo" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+                {% for p in periodos %}
+                <option value="{{ p }}" {% if p == periodo_sel %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit" class="btn btn-sm btn-outline-info"><i class="fas fa-search"></i></button></noscript>
+        </form>
+        <div class="text-muted small">
+            <i class="fas fa-bell me-1"></i>{{ alerts_abiertas }} alerta{{ alerts_abiertas|pluralize }} abierta{{ alerts_abiertas|pluralize }}
+        </div>
+    </div>
+
+    <!-- KPIs por nivel -->
+    <div class="row g-2 mb-3">
+        <div class="col">
+            <div class="card kpi-card h-100"><div class="card-body text-center">
+                <div class="kpi-val">{{ total_miembros }}</div><div class="kpi-lbl">Miembros evaluados</div>
+            </div></div>
+        </div>
+        <div class="col">
+            <div class="card kpi-card lvl-rojo h-100"><div class="card-body text-center">
+                <div class="kpi-val">{{ dist.rojo }}</div><div class="kpi-lbl">🔴 Rojo</div>
+            </div></div>
+        </div>
+        <div class="col">
+            <div class="card kpi-card lvl-naranja h-100"><div class="card-body text-center">
+                <div class="kpi-val">{{ dist.naranja }}</div><div class="kpi-lbl">🟠 Naranja</div>
+            </div></div>
+        </div>
+        <div class="col">
+            <div class="card kpi-card lvl-amarillo h-100"><div class="card-body text-center">
+                <div class="kpi-val">{{ dist.amarillo }}</div><div class="kpi-lbl">🟡 Amarillo</div>
+            </div></div>
+        </div>
+        <div class="col">
+            <div class="card kpi-card lvl-verde h-100"><div class="card-body text-center">
+                <div class="kpi-val">{{ dist.verde }}</div><div class="kpi-lbl">🟢 Verde</div>
+            </div></div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-lg-4">
+            <div class="card h-100"><div class="card-body">
+                <h6 class="card-title">Distribución de riesgo</h6>
+                <canvas id="chartDist" height="220"></canvas>
+            </div></div>
+        </div>
+        <div class="col-lg-8">
+            <div class="card h-100"><div class="card-body">
+                <h6 class="card-title">Top 15 por riesgo</h6>
+                <canvas id="chartTop" height="220"></canvas>
+            </div></div>
+        </div>
+    </div>
+
+    <!-- Mapa de calor: miembros × dimensiones -->
+    <div class="card">
+        <div class="card-body">
+            <h6 class="card-title mb-1">Semáforo — miembros × dimensiones</h6>
+            <p class="text-muted small mb-3">Cuanto más rojo, mayor la señal. Pasa el ratón por una celda para ver el detalle. Las dimensiones Ciclo y Financiero llegan en fases posteriores.</p>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover heat-table align-middle">
+                    <thead>
+                        <tr>
+                            <th class="text-start">Piloto</th>
+                            <th>Riesgo</th>
+                            {% for lbl in dim_labels %}<th>{{ lbl }}</th>{% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody id="heatBody">
+                    {% for r in rows %}
+                        <tr>
+                            <td class="name text-start">{{ r.name }}</td>
+                            <td><span class="badge badge-lvl lvl-{{ r.nivel }}">{{ r.total }}</span></td>
+                            {% for v in r.dims %}<td class="heat" data-val="{{ v }}">{{ v }}</td>{% endfor %}
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="8" class="text-center text-muted py-4">
+                            No hay scores para este periodo todavía. Ejecuta <code>run_auditor_pipeline</code>.
+                        </td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_javascript %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    // --- Color verde->rojo para celdas del heatmap ---
+    function heatColor(v) {
+        v = Math.max(0, Math.min(100, +v || 0));
+        // 0 = verde (140), 100 = rojo (0)
+        var hue = 140 - (v * 1.4);
+        return 'hsl(' + hue + ', 70%, 62%)';
+    }
+    document.querySelectorAll('#heatBody td.heat').forEach(function(td) {
+        td.style.backgroundColor = heatColor(td.dataset.val);
+        td.title = 'Señal: ' + td.dataset.val + '/100';
+    });
+
+    if (typeof Chart === 'undefined') return;
+
+    // --- Doughnut distribución ---
+    var dist = {{ dist_json|safe }};
+    new Chart(document.getElementById('chartDist'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Verde', 'Amarillo', 'Naranja', 'Rojo'],
+            datasets: [{
+                data: [dist.verde, dist.amarillo, dist.naranja, dist.rojo],
+                backgroundColor: ['#10b981', '#f59e0b', '#f97316', '#ef4444'],
+            }]
+        },
+        options: { plugins: { legend: { position: 'bottom' } } }
+    });
+
+    // --- Barra top 15 ---
+    var top = {{ top_json|safe }};
+    var colorByNivel = { verde:'#10b981', amarillo:'#f59e0b', naranja:'#f97316', rojo:'#ef4444' };
+    new Chart(document.getElementById('chartTop'), {
+        type: 'bar',
+        data: {
+            labels: top.map(function(t){ return t.name; }),
+            datasets: [{
+                label: 'Riesgo',
+                data: top.map(function(t){ return t.total; }),
+                backgroundColor: top.map(function(t){ return colorByNivel[t.nivel] || '#888'; }),
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            scales: { x: { min: 0, max: 100 } },
+            plugins: { legend: { display: false } }
+        }
+    });
+})();
+</script>
+{% endblock %}

@@ -80,6 +80,24 @@ def register_menu_pvp():
     )
 
 
+class AuditorMenuHook(MenuItemHook):
+    def render(self, request):
+        if request.user.has_perm("koru_stats.auditor_access"):
+            return super().render(request)
+        return ""
+
+
+@hooks.register("menu_item_hook")
+def register_menu_auditor():
+    return AuditorMenuHook(
+        "🌀 Koru — Auditor",
+        "fas fa-user-shield fa-fw",
+        "koru_stats:auditor_dashboard",
+        navactive=["koru_stats:auditor_dashboard"],
+        order=1204,
+    )
+
+
 @hooks.register("url_hook")
 def register_urls():
     return UrlHook(urls, "koru_stats", r"^koru/")

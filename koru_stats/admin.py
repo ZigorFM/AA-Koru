@@ -3,7 +3,10 @@ from django.contrib import admin
 from django.utils import timezone
 from allianceauth.eveonline.models import EveCorporationInfo
 
-from .models import TrackedCorporation, MoonTaxConfig, MoonTaxPayment
+from .models import (
+    TrackedCorporation, MoonTaxConfig, MoonTaxPayment,
+    AuditorConfig, AuditorRiskScore, AuditorAlert,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -132,3 +135,71 @@ class MoonTaxPaymentAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False  # Solo se crean desde la vista, no manualmente
+
+
+# ---------------------------------------------------------------------------
+# Auditor
+# ---------------------------------------------------------------------------
+
+@admin.register(AuditorConfig)
+class AuditorConfigAdmin(admin.ModelAdmin):
+    list_display    = ("tag", "modo_calibracion", "calibracion_hasta", "umbral_amarillo", "umbral_naranja", "umbral_rojo", "updated_at")
+    readonly_fields = ("updated_at", "blue_alliance_ids", "blue_corp_ids", "own_alliance_ids", "own_corp_ids")
+
+    fieldsets = (
+        ("Identificación", {
+            "fields": ("tag", "updated_at"),
+        }),
+        ("Calibración", {
+            "description": "En modo calibración el Auditor calcula y muestra, pero NO envía avisos a Discord.",
+            "fields": ("modo_calibracion", "calibracion_hasta"),
+        }),
+        ("Pesos por dimensión (0–1, idealmente suman 1)", {
+            "fields": (
+                ("w_pvp", "w_ciclo", "w_espias"),
+                ("w_fuga", "w_huecos", "w_financiero"),
+            ),
+        }),
+        ("Umbrales de nivel (0–100)", {
+            "fields": (("umbral_amarillo", "umbral_naranja", "umbral_rojo"),),
+        }),
+        ("Parámetros de señales", {
+            "fields": ("token_stale_dias", "inactividad_dias", "donacion_externa_min"),
+        }),
+        ("States del core AA (qué cuenta como azul / propio)", {
+            "fields": ("blue_state_ids", "own_state_ids"),
+        }),
+        ("Standings cacheados (auto, vía sync_blue_standings)", {
+            "classes": ("collapse",),
+            "fields": ("blue_alliance_ids", "blue_corp_ids", "own_alliance_ids", "own_corp_ids"),
+        }),
+        ("Assets / staging (Fase 2)", {
+            "classes": ("collapse",),
+            "fields": ("staging_location_ids",),
+        }),
+    )
+
+
+@admin.register(AuditorRiskScore)
+class AuditorRiskScoreAdmin(admin.ModelAdmin):
+    list_display  = ("main_character_name", "period", "risk_total", "nivel",
+                     "score_pvp", "score_ciclo", "score_espias", "score_fuga", "score_huecos", "score_financiero", "computed_at")
+    list_filter   = ("nivel", "period", "corporation_id")
+    search_fields = ("main_character_name",)
+    ordering      = ("-period", "-risk_total")
+    readonly_fields = ("computed_at",)
+
+    def has_add_permission(self, request):
+        return False  # Lo crea la task
+
+
+@admin.register(AuditorAlert)
+class AuditorAlertAdmin(admin.ModelAdmin):
+    list_display  = ("created_at", "severidad", "familia", "codigo", "main_character_name", "period", "estado", "revisada_por")
+    list_filter   = ("estado", "severidad", "familia", "period")
+    search_fields = ("main_character_name", "codigo")
+    ordering      = ("-created_at",)
+    readonly_fields = ("created_at",)
+
+    def has_add_permission(self, request):
+        return False  # Las crea la task

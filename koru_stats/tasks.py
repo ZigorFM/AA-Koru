@@ -1359,3 +1359,250 @@ def run_koru_aggregations(full=False):
         "koru run_koru_aggregations DONE — prices=%s, ore=%s, summary=%s, pvp=%s",
         n_prices, n_ore, n_summary, n_pvp,
     )
+
+
+# ===========================================================================
+# AUDITOR — Fase 1 (señales sobre datos ya existentes)
+# Schedule sugerido en local.py:
+#   CELERYBEAT_SCHEDULE['koru-auditor-daily'] = {
+#       'task': 'koru_stats.tasks.run_auditor_pipeline',
+#       'schedule': crontab(hour=4, minute=15),   # tras koru-daily-pvp (3:30)
+#   }
+# ===========================================================================
+
+def _auditor_clamp(v, lo=0, hi=100):
+    try:
+        return max(lo, min(hi, int(round(v))))
+    except (TypeError, ValueError):
+        return lo
+
+
+@shared_task
+def sync_blue_standings():
+    """Cachea blue/own ids leyendo los States del core de AA en AuditorConfig."""
+    from .models import AuditorConfig
+    cfg, _ = AuditorConfig.objects.get_or_create(tag="default")
+    blue_states = list(cfg.blue_state_ids or [])
+    own_states  = list(cfg.own_state_ids or [])
+
+    # Autodetección por nombre del State si no están configurados a mano
+    if not blue_states or not own_states:
+        with connection.cursor() as c:
+            c.execute("SELECT id, name FROM authentication_state")
+            rows = c.fetchall()
+        for sid, name in rows:
+            n = (name or "").lower()
+            if not cfg.blue_state_ids and ("aliad" in n or "blue" in n):
+                if sid not in blue_states:
+                    blue_states.append(sid)
+            if not cfg.own_state_ids and ("miembro" in n or "member" in n or "academy" in n):
+                if sid not in own_states:
+                    own_states.append(sid)
+
+    def _alliances(state_ids):
+        if not state_ids:
+            return []
+        ph = ",".join(["%s"] * len(state_ids))
+        with connection.cursor() as c:
+            c.execute(
+                "SELECT DISTINCT ai.alliance_id "
+                "FROM authentication_state_member_alliances sma "
+                "JOIN eveonline_eveallianceinfo ai ON ai.id = sma.eveallianceinfo_id "
+                f"WHERE sma.state_id IN ({ph})", state_ids)
+            return [r[0] for r in c.fetchall()]
+
+    def _corps(state_ids):
+        if not state_ids:
+            return []
+        ph = ",".join(["%s"] * len(state_ids))
+        with connection.cursor() as c:
+            c.execute(
+                "SELECT DISTINCT ci.corporation_id "
+                "FROM authentication_state_member_corporations smc "
+                "JOIN eveonline_evecorporationinfo ci ON ci.id = smc.evecorporationinfo_id "
+                f"WHERE smc.state_id IN ({ph})", state_ids)
+            return [r[0] for r in c.fetchall()]
+
+    cfg.blue_state_ids    = blue_states
+    cfg.own_state_ids     = own_states
+    cfg.blue_alliance_ids = _alliances(blue_states)
+    cfg.blue_corp_ids     = _corps(blue_states)
+    cfg.own_alliance_ids  = _alliances(own_states)
+    cfg.own_corp_ids      = _corps(own_states)
+    cfg.save()
+    logger.info("koru sync_blue_standings: blue=%s (%s ally/%s corp) own=%s",
+                blue_states, len(cfg.blue_alliance_ids), len(cfg.blue_corp_ids), own_states)
+    return {"blue_states": blue_states, "blue_alliances": cfg.blue_alliance_ids, "own_states": own_states}
+
+
+@shared_task
+def compute_auditor_scores(periods=None, full=False):
+    """Calcula scores de riesgo por main/periodo (F1: pvp, espías, fuga, huecos)."""
+    from collections import defaultdict
+    from .models import AuditorConfig, AuditorRiskScore, CharacterMonthlyPvp, CharacterKillRecord
+
+    corp_ids = _get_active_corp_ids()
+    if not corp_ids:
+        logger.warning("koru auditor: sin corps activas")
+        return 0
+    periods = _all_periods_with_data() if full else (periods or _default_periods(1))
+    cfg, _ = AuditorConfig.objects.get_or_create(tag="default")
+    stale_days = int(cfg.token_stale_dias or 7)
+    inact_days = max(1, int(cfg.inactividad_dias or 14))
+    ph = ",".join(["%s"] * len(corp_ids))
+
+    # Salud de token + último login + corp por main (no depende del periodo)
+    with connection.cursor() as c:
+        c.execute(
+            "SELECT main_ec.character_id, MAX(main_ec.character_name), MAX(main_ec.corporation_id), "
+            "       MAX(cau.last_known_login), COUNT(DISTINCT ec.id) AS n_chars, "
+            "       SUM(CASE WHEN cau.id IS NULL OR cau.active = 0 "
+            "                 OR cau.last_update_wallet IS NULL "
+            "                 OR cau.last_update_wallet < (NOW() - INTERVAL %s DAY) "
+            "                THEN 1 ELSE 0 END) AS n_blind, "
+            "       DATEDIFF(NOW(), MAX(cau.last_known_login)) AS dias_login "
+            "FROM eveonline_evecharacter ec "
+            "JOIN authentication_characterownership co ON co.character_id = ec.id "
+            "JOIN authentication_userprofile up ON up.user_id = co.user_id "
+            "JOIN eveonline_evecharacter main_ec ON main_ec.id = up.main_character_id "
+            "LEFT JOIN corptools_characteraudit cau ON cau.character_id = ec.id "
+            f"WHERE ec.corporation_id IN ({ph}) "
+            "GROUP BY main_ec.character_id", [stale_days] + corp_ids)
+        base = {}
+        for r in c.fetchall():
+            base[r[0]] = {
+                "main_name": r[1] or "", "corp_id": r[2] or 0, "last_login": r[3],
+                "n_chars": int(r[4] or 0), "n_blind": int(r[5] or 0),
+                "dias_login": (int(r[6]) if r[6] is not None else None),
+            }
+    main_ids = list(base.keys())
+    saved = 0
+
+    for period in periods:
+        pvp = {p.main_character_id: p for p in CharacterMonthlyPvp.objects.filter(period=period)}
+        loss_by_main = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))
+        for mid, ecorp, isk in CharacterKillRecord.objects.filter(
+                period=period, is_loss=True, main_character_id__in=main_ids
+        ).values_list("main_character_id", "enemy_corp_id", "value_isk"):
+            cell = loss_by_main[mid][ecorp or 0]
+            cell[0] += 1
+            cell[1] += float(isk or 0)
+
+        for mid, info in base.items():
+            det = {}
+            # FUGA
+            dias = info["dias_login"]
+            if dias is None:
+                score_fuga = 50
+                det["dias_sin_login"] = None
+            else:
+                score_fuga = _auditor_clamp(dias / inact_days * 50)
+                det["dias_sin_login"] = dias
+            # HUECOS
+            n_chars = info["n_chars"] or 1
+            score_huecos = _auditor_clamp(100 * info["n_blind"] / n_chars)
+            det["chars_ciegos"] = info["n_blind"]
+            det["n_chars"] = info["n_chars"]
+            # ESPÍAS
+            enemy = loss_by_main.get(mid, {})
+            total_losses = sum(v[0] for v in enemy.values())
+            if total_losses >= 3:
+                herf = sum((v[0] / total_losses) ** 2 for v in enemy.values())
+                score_espias = _auditor_clamp(herf * 100)
+                top = max(enemy.items(), key=lambda kv: kv[1][0])
+                det["losses"] = total_losses
+                det["concentracion"] = round(herf, 2)
+                det["top_enemy_corp_id"] = top[0]
+                det["top_enemy_losses"] = top[1][0]
+            else:
+                score_espias = 0
+                det["losses"] = total_losses
+            # PvP (ineficiencia/feeding) — señal débil en F1
+            p = pvp.get(mid)
+            if p:
+                eff = p.isk_efficiency
+                act = float(p.isk_destroyed) + float(p.isk_lost)
+                score_pvp = _auditor_clamp((50 - eff) * 2) if act >= 100_000_000 else 0
+                det["isk_efficiency"] = round(eff, 1)
+            else:
+                score_pvp = 0
+            # Ciclo y financiero: aún no calculados en F1
+            score_ciclo = 0
+            score_financiero = 0
+            # Total renormalizado sobre las dimensiones activas en F1
+            w_pvp = float(cfg.w_pvp); w_esp = float(cfg.w_espias)
+            w_fug = float(cfg.w_fuga); w_hue = float(cfg.w_huecos)
+            sw = (w_pvp + w_esp + w_fug + w_hue) or 1
+            risk = (w_pvp * score_pvp + w_esp * score_espias +
+                    w_fug * score_fuga + w_hue * score_huecos) / sw
+            risk = _auditor_clamp(risk)
+            if risk >= cfg.umbral_rojo:
+                nivel = "rojo"
+            elif risk >= cfg.umbral_naranja:
+                nivel = "naranja"
+            elif risk >= cfg.umbral_amarillo:
+                nivel = "amarillo"
+            else:
+                nivel = "verde"
+            det["_dims_activas_f1"] = ["pvp", "espias", "fuga", "huecos"]
+            AuditorRiskScore.objects.update_or_create(
+                main_character_id=mid, period=period,
+                defaults=dict(
+                    main_character_name=info["main_name"], corporation_id=info["corp_id"],
+                    score_pvp=score_pvp, score_ciclo=score_ciclo, score_espias=score_espias,
+                    score_fuga=score_fuga, score_huecos=score_huecos, score_financiero=score_financiero,
+                    risk_total=risk, nivel=nivel, detalle=det,
+                ),
+            )
+            saved += 1
+    logger.info("koru compute_auditor_scores: %s scores (periodos=%s)", saved, periods)
+    return saved
+
+
+@shared_task
+def emit_auditor_alerts(periods=None):
+    """Genera AuditorAlert en BD para dimensiones >= umbral_naranja. Discord = Fase 4."""
+    from .models import AuditorConfig, AuditorRiskScore, AuditorAlert
+    cfg, _ = AuditorConfig.objects.get_or_create(tag="default")
+    periods = periods or _default_periods(1)
+    created = 0
+    dims = [
+        ("score_huecos",  "huecos",  "cobertura",            "Cobertura/tokens del piloto en riesgo"),
+        ("score_fuga",    "fuga",    "inactividad",          "Caída de actividad / posible fuga"),
+        ("score_espias",  "espias",  "concentracion_enemigo","Pérdidas concentradas ante una corp"),
+        ("score_pvp",     "pvp",     "pvp_anomalo",          "Comportamiento PvP anómalo"),
+    ]
+    for s in AuditorRiskScore.objects.filter(period__in=periods):
+        for field, fam, code, titulo in dims:
+            val = getattr(s, field)
+            if val >= cfg.umbral_naranja:
+                sev = "critico" if val >= cfg.umbral_rojo else "warn"
+                AuditorAlert.objects.update_or_create(
+                    main_character_id=s.main_character_id, period=s.period, codigo=code,
+                    defaults=dict(
+                        main_character_name=s.main_character_name, familia=fam,
+                        severidad=sev, titulo=titulo,
+                        detalle={"score": val, "risk_total": s.risk_total},
+                    ),
+                )
+                created += 1
+    logger.info("koru emit_auditor_alerts: %s alertas (calibracion=%s)", created, cfg.modo_calibracion)
+    return created
+
+
+@shared_task
+def run_auditor_pipeline(full=False):
+    """Pipeline diario del Auditor: standings -> scores -> alertas."""
+    logger.info("koru run_auditor_pipeline START (full=%s)", full)
+    try:
+        sync_blue_standings()
+    except Exception as exc:
+        logger.error("koru auditor sync_blue_standings: %s\n%s", exc, traceback.format_exc())
+    n_scores = compute_auditor_scores(full=full)
+    try:
+        n_alerts = emit_auditor_alerts()
+    except Exception as exc:
+        logger.error("koru auditor emit_auditor_alerts: %s", exc)
+        n_alerts = 0
+    logger.info("koru run_auditor_pipeline DONE — scores=%s alerts=%s", n_scores, n_alerts)
+    return {"scores": n_scores, "alerts": n_alerts}

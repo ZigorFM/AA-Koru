@@ -342,7 +342,7 @@
                 {{ e.enemy_corp_name|default:e.enemy_corp_id }}
               </td>
               <td class="text-end fw-semibold text-danger">{{ e.kills }}</td>
-              <td class="text-end text-muted small">{{ e.isk_destruido|floatformat:0 }} ISK</td>
+              <td class="text-end text-muted small">{{ e.isk_destruido|rkisk }} ISK</td>
             </tr>
             {% empty %}
             <tr><td colspan="3" class="text-center text-muted py-3">Sin datos este per&iacute;odo</td></tr>
@@ -370,7 +370,7 @@
                    class="text-decoration-none">{{ e.enemy_char_name|default:e.enemy_char_id }}</a>
               </td>
               <td class="text-end fw-semibold text-danger">{{ e.kills }}</td>
-              <td class="text-end text-muted small">{{ e.isk_destruido|floatformat:0 }} ISK</td>
+              <td class="text-end text-muted small">{{ e.isk_destruido|rkisk }} ISK</td>
             </tr>
             {% empty %}
             <tr><td colspan="3" class="text-center text-muted py-3">Sin datos este per&iacute;odo</td></tr>
@@ -428,7 +428,7 @@
               {% else %}&mdash;{% endif %}
             </td>
             <td class="text-end fw-semibold {% if km.is_loss %}text-danger{% else %}text-success{% endif %}">
-              {{ km.value_isk|floatformat:0 }}
+              {{ km.value_isk|rkisk }} ISK
             </td>
             <td class="text-muted small">{{ km.kill_date|default:"&mdash;" }}</td>
             <td>
@@ -623,7 +623,7 @@
                 {% endif %}
               </td>
               <td class="text-end fw-semibold small {% if km.is_loss %}text-danger{% else %}text-success{% endif %}">
-                {{ km.value_isk|floatformat:0 }}
+                {{ km.value_isk|rkisk }} ISK
               </td>
               <td class="text-muted small">{{ km.kill_date|default:"&mdash;" }}</td>
               <td>

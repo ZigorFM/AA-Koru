@@ -175,8 +175,10 @@
     var modalEl  = document.getElementById('modalDetalle');
     var bsModal  = (modalEl && window.bootstrap) ? new bootstrap.Modal(modalEl) : null;
 
-    function fmtCorp(id) {
-        return id ? '<a href="https://zkillboard.com/corporation/' + id + '/" target="_blank" rel="noopener">corp #' + id + '</a>' : '—';
+    function fmtCorp(id, name) {
+        if (!id) return '—';
+        var label = name ? name : ('corp #' + id);
+        return '<a href="https://zkillboard.com/corporation/' + id + '/" target="_blank" rel="noopener">' + label + '</a>';
     }
     function explica(r) {
         var d = r.detalle || {}, dims = r.dims || [], L = [];
@@ -197,7 +199,7 @@
         // Espías (idx 2)
         if ((d.losses || 0) >= 3)
             L.push(['Espías', dims[2], '<b>' + d.losses + '</b> pérdidas; concentración <b>' + d.concentracion +
-                    '</b>; ' + d.top_enemy_losses + ' ante ' + fmtCorp(d.top_enemy_corp_id) + '.']);
+                    '</b>; ' + d.top_enemy_losses + ' ante ' + fmtCorp(d.top_enemy_corp_id, d.top_enemy_corp_name) + '.']);
         else
             L.push(['Espías', dims[2], (d.losses || 0) + ' pérdidas (mínimo 3 para evaluar concentración).']);
         // PvP (idx 0)

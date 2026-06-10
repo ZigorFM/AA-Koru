@@ -1528,14 +1528,17 @@ def compute_auditor_scores(periods=None, full=False):
 
         # Espías: concentración de losses ante corps de jugadores
         loss_by_main = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))
-        for mid, ecorp, isk in CharacterKillRecord.objects.filter(
+        corp_names = {}
+        for mid, ecorp, ecorp_name, isk in CharacterKillRecord.objects.filter(
                 period=period, is_loss=True, main_character_id__in=main_ids
-        ).values_list("main_character_id", "enemy_corp_id", "value_isk"):
+        ).values_list("main_character_id", "enemy_corp_id", "enemy_corp_name", "value_isk"):
             if not ecorp:
                 continue
             cell = loss_by_main[mid][ecorp]
             cell[0] += 1
             cell[1] += float(isk or 0)
+            if ecorp_name:
+                corp_names[ecorp] = ecorp_name
 
         # Awox: kills contra corp propia / blue
         awox_by_main = defaultdict(int)
@@ -1623,6 +1626,7 @@ def compute_auditor_scores(periods=None, full=False):
                 det["losses"] = total_losses
                 det["concentracion"] = round(herf, 2)
                 det["top_enemy_corp_id"] = top[0]
+                det["top_enemy_corp_name"] = corp_names.get(top[0], "")
                 det["top_enemy_losses"] = top[1][0]
             else:
                 score_espias = 0

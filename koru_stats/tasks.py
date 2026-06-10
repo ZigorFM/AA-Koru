@@ -1549,7 +1549,7 @@ def compute_auditor_scores(periods=None, full=False):
         # Ciclo de vida: eventos del periodo
         ciclo_by_main = defaultdict(list)
         for ev, mid in CharacterLifecycleEvent.objects.filter(
-                fecha__gte=inicio, fecha__lt=fin, main_character_id__in=main_ids
+                fecha__date__gte=inicio, fecha__date__lt=fin, main_character_id__in=main_ids
         ).values_list("evento", "main_character_id"):
             ciclo_by_main[mid].append(ev)
 
@@ -1868,7 +1868,8 @@ def snapshot_ownership():
 @shared_task
 def detect_lifecycle_events():
     """Compara el ownership de hoy con el snapshot previo y registra eventos de ciclo de vida."""
-    from datetime import date, datetime
+    from datetime import date
+    from django.utils import timezone
     from .models import CharacterOwnershipSnapshot, CharacterLifecycleEvent
     today = date.today()
     prev_dates = list(
@@ -1881,7 +1882,7 @@ def detect_lifecycle_events():
     cur = {r.character_id: r for r in CharacterOwnershipSnapshot.objects.filter(snapshot_date=today)}
     old = {r.character_id: r for r in CharacterOwnershipSnapshot.objects.filter(snapshot_date=prev)}
     corp_ids = set(_get_active_corp_ids())
-    now = datetime.now()
+    now = timezone.now()
     created = 0
 
     def add(cid, cname, mid, evento, ant, nuevo, notas=""):

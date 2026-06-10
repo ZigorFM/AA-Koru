@@ -231,7 +231,8 @@
             if (!r) return;
             document.getElementById('mdTitulo').innerHTML =
                 r.name + ' — Riesgo <span class="badge badge-lvl lvl-' + r.nivel + '">' + r.total + '</span>';
-            var html = '<p class="text-muted small">Desglose de señales (0–100). El riesgo total combina las dimensiones activas en esta fase (PvP, Espías, Fuga, Huecos).</p>';
+            var html = '<a href="/koru/auditor/piloto/' + r.id + '/" class="btn btn-sm btn-primary mb-3"><i class="fas fa-id-card-clip me-1"></i>Ver ficha completa del piloto →</a>';
+            html += '<p class="text-muted small">Desglose de señales (0–100). El riesgo total combina las dimensiones activas en esta fase (PvP, Espías, Fuga, Huecos).</p>';
             html += '<table class="table table-sm align-middle"><tbody>';
             explica(r).forEach(function(item) {
                 var sc = item[1] || 0;

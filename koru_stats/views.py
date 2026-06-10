@@ -2737,3 +2737,148 @@ def auditor_dashboard(request):
         "alerts_abiertas": AuditorAlert.objects.filter(estado="abierta").count(),
     }
     return render(request, "koru_stats/auditor_dashboard.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Auditor — Ficha de auditoría del piloto (Fase 3)
+# ---------------------------------------------------------------------------
+
+@permission_required("koru_stats.auditor_access")
+def auditor_pilot(request, main_id):
+    from datetime import date, timedelta
+    from django.db.models import Sum, Count, Q
+    from .models import (AuditorConfig, AuditorRiskScore, AuditorAlert,
+                         CharacterMonthlyPvp, CharacterKillRecord,
+                         CharacterValueSnapshot, CharacterLifecycleEvent)
+    main_id = int(main_id)
+
+    # --- Personajes del piloto (main + alts) ---
+    SQL_ALTS = (
+        "FROM eveonline_evecharacter main_ec "
+        "JOIN authentication_userprofile up ON up.main_character_id = main_ec.id "
+        "JOIN authentication_characterownership co ON co.user_id = up.user_id "
+        "JOIN eveonline_evecharacter ec ON ec.id = co.character_id ")
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT ec.character_id, ec.character_name, ec.corporation_id " + SQL_ALTS +
+            "WHERE main_ec.character_id = %s ORDER BY (ec.character_id=%s) DESC, ec.character_name",
+            [main_id, main_id])
+        alts = _fetchall(cur)
+    main_row = next((a for a in alts if a["character_id"] == main_id), (alts[0] if alts else None))
+    main_name = main_row["character_name"] if main_row else f"#{main_id}"
+    corp_id = main_row["corporation_id"] if main_row else 0
+
+    # --- Cobertura: salud de token por alt ---
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT ec.character_id, ec.character_name, ec.corporation_id, "
+            "       cau.last_known_login, cau.last_update_wallet, cau.balance, "
+            "       DATEDIFF(NOW(), cau.last_update_wallet) AS dias_wallet, "
+            "       DATEDIFF(NOW(), cau.last_known_login)   AS dias_login "
+            + SQL_ALTS +
+            "LEFT JOIN corptools_characteraudit cau ON cau.character_id = ec.id "
+            "WHERE main_ec.character_id = %s ORDER BY ec.character_name", [main_id])
+        cobertura = _fetchall(cur)
+
+    # --- Riesgo: historial + radar (último periodo) ---
+    scores = list(AuditorRiskScore.objects.filter(main_character_id=main_id).order_by("period"))
+    risk_hist = [{"period": s.period, "risk": s.risk_total, "nivel": s.nivel} for s in scores]
+    latest = scores[-1] if scores else None
+    radar = None
+    if latest:
+        radar = [latest.score_pvp, latest.score_ciclo, latest.score_espias,
+                 latest.score_fuga, latest.score_huecos, latest.score_financiero]
+
+    # --- Alertas del piloto ---
+    alerts = list(AuditorAlert.objects.filter(main_character_id=main_id).order_by("-created_at")[:50])
+    has_pvp_alert = any(a.familia in ("pvp", "espias") and a.estado == "abierta" for a in alerts)
+
+    # --- Financiero (últimos 6 meses) ---
+    desde = date.today() - timedelta(days=180)
+    SQL_WJ = (
+        "FROM corptools_characterwalletjournalentry wj "
+        "JOIN corptools_characteraudit cau ON cau.id = wj.character_id "
+        "JOIN eveonline_evecharacter ec ON ec.id = cau.character_id "
+        "JOIN authentication_characterownership co ON co.character_id = ec.id "
+        "JOIN authentication_userprofile up ON up.user_id = co.user_id "
+        "JOIN eveonline_evecharacter main_ec ON main_ec.id = up.main_character_id ")
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT wj.ref_type, ROUND(SUM(wj.amount),2) AS total, COUNT(*) AS n " + SQL_WJ +
+            "WHERE main_ec.character_id=%s AND wj.date>=%s "
+            "GROUP BY wj.ref_type ORDER BY ABS(SUM(wj.amount)) DESC", [main_id, desde])
+        wallet_cats = _fetchall(cur)
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT wj.second_party_id AS party_id, "
+            "COALESCE(rc.character_name, rco.corporation_name) AS party_name, "
+            "ROUND(SUM(ABS(wj.amount)),2) AS total, COUNT(*) AS n " + SQL_WJ +
+            "LEFT JOIN eveonline_evecharacter rc ON rc.character_id = wj.second_party_id "
+            "LEFT JOIN eveonline_evecorporationinfo rco ON rco.corporation_id = wj.second_party_id "
+            "WHERE main_ec.character_id=%s AND wj.ref_type='player_donation' AND wj.amount<0 AND wj.date>=%s "
+            "GROUP BY wj.second_party_id, party_name ORDER BY total DESC LIMIT 20", [main_id, desde])
+        donaciones_out = _fetchall(cur)
+
+    # --- Patrimonio + balance en el tiempo (snapshots) ---
+    val = (CharacterValueSnapshot.objects.filter(main_character_id=main_id)
+           .values("snapshot_date").annotate(bal=Sum("wallet_balance"), ass=Sum("asset_value"))
+           .order_by("snapshot_date"))
+    patrimonio_hist = [{"date": v["snapshot_date"].isoformat(),
+                        "balance": float(v["bal"] or 0), "assets": float(v["ass"] or 0)} for v in val]
+
+    # --- PvP resumen ---
+    pt = CharacterMonthlyPvp.objects.filter(main_character_id=main_id).aggregate(
+        k=Sum("ships_destroyed"), d=Sum("ships_lost"), idk=Sum("isk_destroyed"),
+        il=Sum("isk_lost"), part=Sum("participations"), solo=Sum("solo_kills"))
+    isk_d = float(pt["idk"] or 0); isk_l = float(pt["il"] or 0)
+    pvp_summary = {
+        "kills": int(pt["k"] or 0), "losses": int(pt["d"] or 0),
+        "participations": int(pt["part"] or 0), "solo": int(pt["solo"] or 0),
+        "isk_destroyed": isk_d, "isk_lost": isk_l,
+        "eff": round(isk_d / (isk_d + isk_l) * 100, 1) if (isk_d + isk_l) else 0.0,
+    }
+    cfg = AuditorConfig.objects.filter(tag="default").first()
+    awox_corps = set((cfg.own_corp_ids or []) + (cfg.blue_corp_ids or [])) if cfg else set()
+    awox_allis = set((cfg.own_alliance_ids or []) + (cfg.blue_alliance_ids or [])) if cfg else set()
+    awox_kills = []
+    if awox_corps or awox_allis:
+        q = Q()
+        if awox_corps:
+            q |= Q(victim_corp_id__in=awox_corps)
+        if awox_allis:
+            q |= Q(victim_alliance_id__in=awox_allis)
+        awox_kills = list(CharacterKillRecord.objects.filter(q, main_character_id=main_id, is_loss=False)
+                          .order_by("-kill_date").values(
+                              "killmail_id", "victim_corp_id", "victim_corp_name",
+                              "ship_name", "value_isk", "kill_date")[:50])
+
+    # --- PvP detalle (solo si hay alerta de pvp/espías) ---
+    kill_feed = []
+    top_enemies = []
+    if has_pvp_alert:
+        kill_feed = list(CharacterKillRecord.objects.filter(main_character_id=main_id)
+                         .order_by("-kill_date", "-killmail_id").values(
+                             "killmail_id", "is_loss", "ship_name", "value_isk", "kill_date",
+                             "enemy_char_name", "enemy_corp_name", "victim_corp_name")[:40])
+        top_enemies = list(CharacterKillRecord.objects.filter(
+            main_character_id=main_id, is_loss=True, enemy_corp_id__isnull=False)
+            .values("enemy_corp_id", "enemy_corp_name").annotate(n=Count("id")).order_by("-n")[:10])
+
+    # --- Ciclo de vida ---
+    ciclo = list(CharacterLifecycleEvent.objects.filter(main_character_id=main_id)
+                 .order_by("-fecha").values(
+                     "fecha", "evento", "character_name", "estado_anterior", "estado_nuevo", "notas")[:50])
+
+    context = {
+        "main_id": main_id, "main_name": main_name, "corp_id": corp_id,
+        "alts": alts, "cobertura": cobertura,
+        "latest": latest, "radar_json": _to_json(radar) if radar else "null",
+        "risk_hist": risk_hist, "risk_hist_json": _to_json(risk_hist),
+        "alerts": alerts,
+        "wallet_cats": wallet_cats, "donaciones_out": donaciones_out,
+        "patrimonio_hist": patrimonio_hist, "patrimonio_json": _to_json(patrimonio_hist),
+        "pvp_summary": pvp_summary, "awox_kills": awox_kills,
+        "has_pvp_alert": has_pvp_alert, "kill_feed": kill_feed, "top_enemies": top_enemies,
+        "ciclo": ciclo,
+    }
+    return render(request, "koru_stats/auditor_pilot.html", context)

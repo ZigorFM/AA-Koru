@@ -1,0 +1,288 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Ficha Auditor{% endblock %}
+
+{% block page_title %}
+    {% include "framework/header/page-header.html" with title=main_name subtitle="Ficha de auditoría del piloto" %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:auditor_dashboard" as url_aud %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_aud title="Auditor" fa_icon="fa-solid fa-user-shield" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.portrait-lg { width:64px; height:64px; border-radius:50%; object-fit:cover; }
+.portrait    { width:28px; height:28px; border-radius:50%; object-fit:cover; }
+.kpi-card .kpi-val { font-size:1.6rem; font-weight:700; line-height:1; }
+.kpi-card .kpi-lbl { font-size:.72rem; opacity:.75; }
+.lvl-verde{background:#10b981;color:#fff}.lvl-amarillo{background:#f59e0b;color:#111}
+.lvl-naranja{background:#f97316;color:#fff}.lvl-rojo{background:#ef4444;color:#fff}
+.sev-info{color:#60a5fa}.sev-warn{color:#f59e0b}.sev-critico{color:#ef4444}
+.sec-card{border-radius:10px}
+.txt-ext{color:#f59e0b}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <!-- Cabecera -->
+  <div class="card sec-card mb-3">
+    <div class="card-body d-flex flex-wrap align-items-center gap-3">
+      <img src="https://images.evetech.net/characters/{{ main_id }}/portrait?size=64" class="portrait-lg" onerror="this.style.display='none'">
+      <div class="flex-grow-1">
+        <h4 class="mb-0">{{ main_name }}
+          {% if latest %}<span class="badge lvl-{{ latest.nivel }} ms-2">Riesgo {{ latest.risk_total }}</span>{% endif %}
+        </h4>
+        <div class="text-muted small">
+          <a href="https://zkillboard.com/character/{{ main_id }}/" target="_blank" class="text-decoration-none">zKillboard</a>
+          · {{ alts|length }} personaje{{ alts|length|pluralize }} · corp {{ corp_id }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Riesgo: radar + historial -->
+  <div class="row g-3 mb-3">
+    <div class="col-lg-5">
+      <div class="card sec-card h-100"><div class="card-body">
+        <h6 class="card-title">Perfil de riesgo (último periodo)</h6>
+        {% if radar_json != "null" %}<canvas id="chartRadar" height="240"></canvas>
+        {% else %}<p class="text-muted">Sin scores todavía.</p>{% endif %}
+      </div></div>
+    </div>
+    <div class="col-lg-7">
+      <div class="card sec-card h-100"><div class="card-body">
+        <h6 class="card-title">Evolución del riesgo</h6>
+        <canvas id="chartRisk" height="240"></canvas>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- Alertas -->
+  <div class="card sec-card mb-3"><div class="card-body">
+    <h6 class="card-title"><i class="fas fa-bell me-1"></i>Alertas ({{ alerts|length }})</h6>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead><tr><th>Fecha</th><th>Sev.</th><th>Familia</th><th>Título</th><th>Estado</th></tr></thead>
+        <tbody>
+        {% for a in alerts %}
+          <tr>
+            <td class="text-muted small">{{ a.created_at|date:"Y-m-d" }}</td>
+            <td class="sev-{{ a.severidad }} fw-bold">{{ a.severidad }}</td>
+            <td>{{ a.familia }}</td>
+            <td>{{ a.titulo }}</td>
+            <td><span class="badge bg-secondary">{{ a.estado }}</span></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-3">Sin alertas para este piloto.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+
+  <!-- Financiero -->
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card sec-card h-100"><div class="card-body">
+        <h6 class="card-title"><i class="fas fa-coins me-1"></i>Wallet por categoría <small class="text-muted">(6 meses)</small></h6>
+        <div class="table-responsive" style="max-height:320px;overflow:auto">
+          <table class="table table-sm table-hover mb-0">
+            <thead><tr><th>Tipo</th><th class="text-end">Total</th><th class="text-end">N</th></tr></thead>
+            <tbody>
+            {% for w in wallet_cats %}
+              <tr><td>{{ w.ref_type }}</td>
+                  <td class="text-end {% if w.total < 0 %}text-danger{% else %}text-success{% endif %}">{{ w.total|rkisk }}</td>
+                  <td class="text-end text-muted">{{ w.n }}</td></tr>
+            {% empty %}<tr><td colspan="3" class="text-center text-muted py-3">Sin movimientos.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card sec-card h-100"><div class="card-body">
+        <h6 class="card-title"><i class="fas fa-hand-holding-usd me-1"></i>Donaciones salientes <small class="text-muted">(6 meses)</small></h6>
+        <div class="table-responsive" style="max-height:320px;overflow:auto">
+          <table class="table table-sm table-hover mb-0">
+            <thead><tr><th>Destinatario</th><th class="text-end">ISK</th><th class="text-end">N</th></tr></thead>
+            <tbody>
+            {% for d in donaciones_out %}
+              <tr>
+                <td>{% if d.party_name %}{{ d.party_name }}{% else %}<span class="txt-ext">externo #{{ d.party_id }}</span>{% endif %}</td>
+                <td class="text-end text-danger">{{ d.total|rkisk }}</td>
+                <td class="text-end text-muted">{{ d.n }}</td>
+              </tr>
+            {% empty %}<tr><td colspan="3" class="text-center text-muted py-3">Sin donaciones salientes.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- Patrimonio en el tiempo -->
+  <div class="card sec-card mb-3"><div class="card-body">
+    <h6 class="card-title"><i class="fas fa-chart-area me-1"></i>Patrimonio y balance en el tiempo</h6>
+    {% if patrimonio_hist %}<canvas id="chartPatrimonio" height="90"></canvas>
+    {% else %}<p class="text-muted mb-0">Aún no hay snapshots. Se irá rellenando a diario.</p>{% endif %}
+  </div></div>
+
+  <!-- PvP -->
+  <div class="card sec-card mb-3"><div class="card-body">
+    <h6 class="card-title"><i class="fas fa-crosshairs me-1"></i>PvP{% if has_pvp_alert %} <span class="badge bg-danger">detalle (alerta activa)</span>{% endif %}</h6>
+    <div class="row g-2 mb-2">
+      <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val text-success">{{ pvp_summary.kills }}</div><div class="kpi-lbl">Final blows</div></div></div></div>
+      <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val">{{ pvp_summary.participations }}</div><div class="kpi-lbl">Participó</div></div></div></div>
+      <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val text-danger">{{ pvp_summary.losses }}</div><div class="kpi-lbl">Losses</div></div></div></div>
+      <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val">{{ pvp_summary.eff }}%</div><div class="kpi-lbl">Eficiencia</div></div></div></div>
+      <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val text-warning">{{ pvp_summary.isk_destroyed|rkisk }}</div><div class="kpi-lbl">ISK dest.</div></div></div></div>
+      <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val {% if awox_kills %}text-danger{% endif %}">{{ awox_kills|length }}</div><div class="kpi-lbl">⚠️ Awox</div></div></div></div>
+    </div>
+
+    {% if awox_kills %}
+    <div class="alert alert-danger py-2"><strong>Posible awox</strong> — kills contra corp propia/blue:</div>
+    <div class="table-responsive mb-2"><table class="table table-sm mb-0">
+      <thead><tr><th>Fecha</th><th>Víctima (corp)</th><th>Nave</th><th class="text-end">ISK</th><th></th></tr></thead>
+      <tbody>
+      {% for k in awox_kills %}
+        <tr><td class="small text-muted">{{ k.kill_date }}</td>
+            <td>{{ k.victim_corp_name|default:k.victim_corp_id }}</td>
+            <td>{{ k.ship_name }}</td><td class="text-end">{{ k.value_isk|rkisk }}</td>
+            <td><a href="https://zkillboard.com/kill/{{ k.killmail_id }}/" target="_blank">↗</a></td></tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% endif %}
+
+    {% if has_pvp_alert %}
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <h6 class="small text-muted mt-2">Top corps enemigas (losses)</h6>
+          <table class="table table-sm mb-0">
+            <tbody>
+            {% for e in top_enemies %}
+              <tr><td>{{ e.enemy_corp_name|default:e.enemy_corp_id }}</td><td class="text-end text-danger">{{ e.n }}</td></tr>
+            {% empty %}<tr><td class="text-muted">—</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="col-lg-8">
+          <h6 class="small text-muted mt-2">Kill feed reciente</h6>
+          <div class="table-responsive" style="max-height:320px;overflow:auto">
+            <table class="table table-sm mb-0">
+              <thead><tr><th>Fecha</th><th>Tipo</th><th>Nave</th><th>Contraparte</th><th class="text-end">ISK</th><th></th></tr></thead>
+              <tbody>
+              {% for k in kill_feed %}
+                <tr>
+                  <td class="small text-muted">{{ k.kill_date }}</td>
+                  <td>{% if k.is_loss %}<span class="text-danger">Loss</span>{% else %}<span class="text-success">Kill</span>{% endif %}</td>
+                  <td>{{ k.ship_name }}</td>
+                  <td class="small">{% if k.is_loss %}{{ k.enemy_char_name|default:"—" }}{% if k.enemy_corp_name %} ({{ k.enemy_corp_name }}){% endif %}{% else %}{{ k.victim_corp_name|default:"—" }}{% endif %}</td>
+                  <td class="text-end">{{ k.value_isk|rkisk }}</td>
+                  <td><a href="https://zkillboard.com/kill/{{ k.killmail_id }}/" target="_blank">↗</a></td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <p class="text-muted small mb-0">PvP resumido (sin alerta de PvP/espías activa). Si surge una alerta, aquí se desplegará el kill feed y los enemigos.</p>
+    {% endif %}
+  </div></div>
+
+  <!-- Ciclo de vida + Cobertura -->
+  <div class="row g-3 mb-4">
+    <div class="col-lg-6">
+      <div class="card sec-card h-100"><div class="card-body">
+        <h6 class="card-title"><i class="fas fa-stream me-1"></i>Ciclo de vida</h6>
+        <div class="table-responsive" style="max-height:300px;overflow:auto">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Fecha</th><th>Personaje</th><th>Evento</th><th>Cambio</th></tr></thead>
+            <tbody>
+            {% for e in ciclo %}
+              <tr><td class="small text-muted">{{ e.fecha|date:"Y-m-d" }}</td>
+                  <td>{{ e.character_name }}</td>
+                  <td><span class="badge bg-secondary">{{ e.evento }}</span></td>
+                  <td class="small text-muted">{{ e.estado_anterior }} → {{ e.estado_nuevo }}</td></tr>
+            {% empty %}<tr><td colspan="4" class="text-center text-muted py-3">Sin eventos registrados aún.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card sec-card h-100"><div class="card-body">
+        <h6 class="card-title"><i class="fas fa-id-badge me-1"></i>Cobertura (estado de token por personaje)</h6>
+        <div class="table-responsive" style="max-height:300px;overflow:auto">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Personaje</th><th>Últ. conexión</th><th>Últ. sync wallet</th><th class="text-end">Balance</th></tr></thead>
+            <tbody>
+            {% for c in cobertura %}
+              <tr>
+                <td><img src="https://images.evetech.net/characters/{{ c.character_id }}/portrait?size=28" class="portrait me-1" onerror="this.style.display='none'">{{ c.character_name }}</td>
+                <td class="small {% if c.dias_login > 14 %}text-warning{% endif %}">{{ c.last_known_login|date:"Y-m-d"|default:"—" }}</td>
+                <td class="small {% if c.dias_wallet > 7 or c.dias_wallet == None %}text-danger{% endif %}">{{ c.last_update_wallet|date:"Y-m-d"|default:"sin token" }}</td>
+                <td class="text-end">{{ c.balance|rkisk }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_javascript %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+    if (typeof Chart === 'undefined') return;
+    var fmtISK = function(v){ v=+v||0; var a=Math.abs(v); return a>=1e12?(v/1e12).toFixed(2)+' T':a>=1e9?(v/1e9).toFixed(2)+' B':a>=1e6?(v/1e6).toFixed(1)+' M':a>=1e3?(v/1e3).toFixed(0)+' K':v.toFixed(0); };
+
+    var radar = {{ radar_json|safe }};
+    if (radar) {
+        new Chart(document.getElementById('chartRadar'), {
+            type:'radar',
+            data:{ labels:['PvP','Ciclo','Espías','Fuga','Huecos','Financ.'],
+                datasets:[{ data:radar, backgroundColor:'rgba(239,68,68,.2)', borderColor:'#ef4444', pointBackgroundColor:'#ef4444' }]},
+            options:{ scales:{ r:{ min:0, max:100, ticks:{ stepSize:25 } } }, plugins:{ legend:{ display:false } } }
+        });
+    }
+
+    var rh = {{ risk_hist_json|safe }};
+    var colorByNivel = { verde:'#10b981', amarillo:'#f59e0b', naranja:'#f97316', rojo:'#ef4444' };
+    new Chart(document.getElementById('chartRisk'), {
+        type:'line',
+        data:{ labels:rh.map(function(x){return x.period;}),
+            datasets:[{ label:'Riesgo', data:rh.map(function(x){return x.risk;}),
+                borderColor:'#8b5cf6', backgroundColor:'rgba(139,92,246,.15)', fill:true, tension:.25,
+                pointBackgroundColor:rh.map(function(x){return colorByNivel[x.nivel]||'#888';}), pointRadius:4 }]},
+        options:{ scales:{ y:{ min:0, max:100 } }, plugins:{ legend:{ display:false } } }
+    });
+
+    var ph = {{ patrimonio_json|safe }};
+    var elP = document.getElementById('chartPatrimonio');
+    if (elP && ph.length) {
+        new Chart(elP, {
+            type:'line',
+            data:{ labels:ph.map(function(x){return x.date;}),
+                datasets:[
+                    { label:'Assets', data:ph.map(function(x){return x.assets;}), borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,.12)', fill:true, tension:.2 },
+                    { label:'Balance', data:ph.map(function(x){return x.balance;}), borderColor:'#10b981', backgroundColor:'rgba(16,185,129,.12)', fill:true, tension:.2 }
+                ]},
+            options:{ scales:{ y:{ ticks:{ callback:fmtISK } } },
+                plugins:{ legend:{ position:'bottom' }, tooltip:{ callbacks:{ label:function(c){ return ' '+c.dataset.label+': '+fmtISK(c.raw)+' ISK'; } } } } }
+        });
+    }
+})();
+</script>
+{% endblock %}

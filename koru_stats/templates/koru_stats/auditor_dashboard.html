@@ -201,10 +201,12 @@
         else
             L.push(['Espías', dims[2], (d.losses || 0) + ' pérdidas (mínimo 3 para evaluar concentración).']);
         // PvP (idx 0)
-        if (d.isk_efficiency !== undefined)
-            L.push(['PvP', dims[0], 'Eficiencia ISK <b>' + d.isk_efficiency + '%</b> (cuanto más baja, más señal de feeding/pérdidas).']);
-        else
+        if (d.isk_efficiency !== undefined) {
+            var pl = (d.ships_lost !== undefined) ? d.ships_lost : '?';
+            L.push(['PvP', dims[0], 'Eficiencia ISK <b>' + d.isk_efficiency + '%</b>, <b>' + pl + '</b> naves perdidas. Solo puntúa con 3+ pérdidas sostenidas (feeding); el awox real llega en Fase 2.']);
+        } else {
             L.push(['PvP', dims[0], 'Sin actividad PvP relevante en el periodo.']);
+        }
         // Ciclo (idx 1) y Financiero (idx 5)
         L.push(['Ciclo de vida', dims[1], 'Pendiente — llega en Fase 2/3 (entradas/salidas/borrado de PJ).']);
         L.push(['Financiero', dims[5], 'Pendiente — llega en Fase 2.']);

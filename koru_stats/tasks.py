@@ -1534,13 +1534,18 @@ def compute_auditor_scores(periods=None, full=False):
             else:
                 score_espias = 0
                 det["losses"] = total_losses
-            # PvP (ineficiencia/feeding) — señal débil en F1
+            # PvP (feeding) — solo con pérdidas SOSTENIDAS (>=3) y baja eficiencia.
+            # Una pérdida puntual no es señal; el feeding/awox real llega en Fase 2 (victim_corp).
             p = pvp.get(mid)
             if p:
                 eff = p.isk_efficiency
                 act = float(p.isk_destroyed) + float(p.isk_lost)
-                score_pvp = _auditor_clamp((50 - eff) * 2) if act >= 100_000_000 else 0
+                if p.ships_lost >= 3 and act >= 100_000_000:
+                    score_pvp = _auditor_clamp((50 - eff) * 2)
+                else:
+                    score_pvp = 0
                 det["isk_efficiency"] = round(eff, 1)
+                det["ships_lost"] = p.ships_lost
             else:
                 score_pvp = 0
             # Ciclo y financiero: aún no calculados en F1

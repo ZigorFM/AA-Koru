@@ -1495,7 +1495,9 @@ def compute_auditor_scores(periods=None, full=False):
         for mid, ecorp, isk in CharacterKillRecord.objects.filter(
                 period=period, is_loss=True, main_character_id__in=main_ids
         ).values_list("main_character_id", "enemy_corp_id", "value_isk"):
-            cell = loss_by_main[mid][ecorp or 0]
+            if not ecorp:
+                continue  # muertes sin corp enemiga (NPC/no resuelto) no cuentan para concentracion
+            cell = loss_by_main[mid][ecorp]
             cell[0] += 1
             cell[1] += float(isk or 0)
 

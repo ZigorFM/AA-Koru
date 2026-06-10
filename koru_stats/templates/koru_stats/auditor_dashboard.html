@@ -122,7 +122,7 @@
                     </thead>
                     <tbody id="heatBody">
                     {% for r in rows %}
-                        <tr>
+                        <tr class="heat-row" data-idx="{{ forloop.counter0 }}" style="cursor:pointer;" title="Clic para ver el detalle">
                             <td class="name text-start">{{ r.name }}</td>
                             <td><span class="badge badge-lvl lvl-{{ r.nivel }}">{{ r.total }}</span></td>
                             {% for v in r.dims %}<td class="heat" data-val="{{ v }}">{{ v }}</td>{% endfor %}
@@ -136,6 +136,19 @@
                 </table>
             </div>
         </div>
+    </div>
+
+    <!-- Modal de detalle por piloto -->
+    <div class="modal fade" id="modalDetalle" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="mdTitulo">Detalle</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+          </div>
+          <div class="modal-body" id="mdBody"></div>
+        </div>
+      </div>
     </div>
 
 </div>
@@ -155,6 +168,60 @@
     document.querySelectorAll('#heatBody td.heat').forEach(function(td) {
         td.style.backgroundColor = heatColor(td.dataset.val);
         td.title = 'Señal: ' + td.dataset.val + '/100';
+    });
+
+    // --- Detalle al hacer clic en una fila ---
+    var rowsData = {{ rows_json|safe }};
+    var modalEl  = document.getElementById('modalDetalle');
+    var bsModal  = (modalEl && window.bootstrap) ? new bootstrap.Modal(modalEl) : null;
+
+    function fmtCorp(id) {
+        return id ? '<a href="https://zkillboard.com/corporation/' + id + '/" target="_blank" rel="noopener">corp #' + id + '</a>' : '—';
+    }
+    function explica(r) {
+        var d = r.detalle || {}, dims = r.dims || [], L = [];
+        // Fuga (idx 3)
+        if (d.dias_sin_login === null || d.dias_sin_login === undefined)
+            L.push(['Fuga', dims[3], 'Sin registro de última conexión (token sin datos de login).']);
+        else
+            L.push(['Fuga', dims[3], 'Última conexión hace <b>' + d.dias_sin_login + ' días</b>.']);
+        // Huecos (idx 4)
+        L.push(['Huecos', dims[4], '<b>' + (d.chars_ciegos || 0) + '</b> de <b>' + (d.n_chars || 0) +
+                '</b> personajes sin visibilidad (token caído o sin sincronizar).']);
+        // Espías (idx 2)
+        if ((d.losses || 0) >= 3)
+            L.push(['Espías', dims[2], '<b>' + d.losses + '</b> pérdidas; concentración <b>' + d.concentracion +
+                    '</b>; ' + d.top_enemy_losses + ' ante ' + fmtCorp(d.top_enemy_corp_id) + '.']);
+        else
+            L.push(['Espías', dims[2], (d.losses || 0) + ' pérdidas (mínimo 3 para evaluar concentración).']);
+        // PvP (idx 0)
+        if (d.isk_efficiency !== undefined)
+            L.push(['PvP', dims[0], 'Eficiencia ISK <b>' + d.isk_efficiency + '%</b> (cuanto más baja, más señal de feeding/pérdidas).']);
+        else
+            L.push(['PvP', dims[0], 'Sin actividad PvP relevante en el periodo.']);
+        // Ciclo (idx 1) y Financiero (idx 5)
+        L.push(['Ciclo de vida', dims[1], 'Pendiente — llega en Fase 2/3 (entradas/salidas/borrado de PJ).']);
+        L.push(['Financiero', dims[5], 'Pendiente — llega en Fase 2.']);
+        return L;
+    }
+    document.querySelectorAll('#heatBody tr.heat-row').forEach(function(tr) {
+        tr.addEventListener('click', function() {
+            var r = rowsData[+tr.dataset.idx];
+            if (!r) return;
+            document.getElementById('mdTitulo').innerHTML =
+                r.name + ' — Riesgo <span class="badge badge-lvl lvl-' + r.nivel + '">' + r.total + '</span>';
+            var html = '<p class="text-muted small">Desglose de señales (0–100). El riesgo total combina las dimensiones activas en esta fase (PvP, Espías, Fuga, Huecos).</p>';
+            html += '<table class="table table-sm align-middle"><tbody>';
+            explica(r).forEach(function(item) {
+                var sc = item[1] || 0;
+                html += '<tr><td style="width:130px"><b>' + item[0] + '</b></td>'
+                      + '<td style="width:60px"><span class="badge" style="background:' + heatColor(sc) + ';color:#111">' + sc + '</span></td>'
+                      + '<td>' + item[2] + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            document.getElementById('mdBody').innerHTML = html;
+            if (bsModal) bsModal.show();
+        });
     });
 
     if (typeof Chart === 'undefined') return;

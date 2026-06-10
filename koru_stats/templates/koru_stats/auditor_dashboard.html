@@ -180,14 +180,22 @@
     }
     function explica(r) {
         var d = r.detalle || {}, dims = r.dims || [], L = [];
-        // Fuga (idx 3)
-        if (d.dias_sin_login === null || d.dias_sin_login === undefined)
+        var actual = d._periodo_actual !== false;
+        // Fuga (idx 3) — estado actual, solo en el periodo en curso
+        if (!actual)
+            L.push(['Fuga', dims[3], '<span class="text-muted">Estado actual; solo se evalúa en el periodo en curso.</span>']);
+        else if (d.dias_sin_login === null || d.dias_sin_login === undefined)
             L.push(['Fuga', dims[3], 'Sin registro de última conexión (token sin datos de login).']);
         else
             L.push(['Fuga', dims[3], 'Última conexión hace <b>' + d.dias_sin_login + ' días</b>.']);
-        // Huecos (idx 4)
-        L.push(['Huecos', dims[4], '<b>' + (d.chars_ciegos || 0) + '</b> de <b>' + (d.n_chars || 0) +
-                '</b> personajes sin visibilidad (token caído o sin sincronizar).']);
+        // Huecos (idx 4) — estado actual, solo en el periodo en curso
+        if (!actual) {
+            L.push(['Huecos', dims[4], '<span class="text-muted">Estado actual; solo se evalúa en el periodo en curso.</span>']);
+        } else {
+            var hh = '<b>' + (d.chars_ciegos || 0) + '</b> de <b>' + (d.n_chars || 0) + '</b> personajes sin token o desactivado.';
+            if (d.chars_sin_sync) hh += ' <span class="text-muted">(+' + d.chars_sin_sync + ' con sync atrasado, informativo).</span>';
+            L.push(['Huecos', dims[4], hh]);
+        }
         // Espías (idx 2)
         if ((d.losses || 0) >= 3)
             L.push(['Espías', dims[2], '<b>' + d.losses + '</b> pérdidas; concentración <b>' + d.concentracion +

@@ -1437,7 +1437,12 @@ def sync_blue_standings():
 
 @shared_task
 def compute_auditor_scores(periods=None, full=False):
-    """Calcula scores de riesgo por main/periodo (F1: pvp, espías, fuga, huecos)."""
+    """Calcula scores de riesgo por main/periodo.
+
+    F1 dims: PvP, Espías (del periodo) + Fuga, Huecos (estado ACTUAL).
+    Fuga/Huecos solo puntúan en el periodo en curso; en periodos pasados
+    el riesgo se calcula solo con las dimensiones de comportamiento (PvP, Espías).
+    """
     from collections import defaultdict
     from .models import AuditorConfig, AuditorRiskScore, CharacterMonthlyPvp, CharacterKillRecord
 
@@ -1446,20 +1451,24 @@ def compute_auditor_scores(periods=None, full=False):
         logger.warning("koru auditor: sin corps activas")
         return 0
     periods = _all_periods_with_data() if full else (periods or _default_periods(1))
+    current_period = datetime.now().strftime("%Y-%m")
     cfg, _ = AuditorConfig.objects.get_or_create(tag="default")
     stale_days = int(cfg.token_stale_dias or 7)
     inact_days = max(1, int(cfg.inactividad_dias or 14))
     ph = ",".join(["%s"] * len(corp_ids))
 
-    # Salud de token + último login + corp por main (no depende del periodo)
+    # Salud de token + último login + corp por main (estado ACTUAL, no del periodo)
+    #   n_blind = personajes sin audit o con token desactivado (punto ciego duro)
+    #   n_stale = personajes con token vivo pero sync de wallet atrasado (solo informativo)
     with connection.cursor() as c:
         c.execute(
             "SELECT main_ec.character_id, MAX(main_ec.character_name), MAX(main_ec.corporation_id), "
             "       MAX(cau.last_known_login), COUNT(DISTINCT ec.id) AS n_chars, "
-            "       SUM(CASE WHEN cau.id IS NULL OR cau.active = 0 "
-            "                 OR cau.last_update_wallet IS NULL "
-            "                 OR cau.last_update_wallet < (NOW() - INTERVAL %s DAY) "
-            "                THEN 1 ELSE 0 END) AS n_blind, "
+            "       SUM(CASE WHEN cau.id IS NULL OR cau.active = 0 THEN 1 ELSE 0 END) AS n_blind, "
+            "       SUM(CASE WHEN cau.id IS NOT NULL AND cau.active = 1 "
+            "                 AND (cau.last_update_wallet IS NULL "
+            "                      OR cau.last_update_wallet < (NOW() - INTERVAL %s DAY)) "
+            "                THEN 1 ELSE 0 END) AS n_stale, "
             "       DATEDIFF(NOW(), MAX(cau.last_known_login)) AS dias_login "
             "FROM eveonline_evecharacter ec "
             "JOIN authentication_characterownership co ON co.character_id = ec.id "
@@ -1473,12 +1482,14 @@ def compute_auditor_scores(periods=None, full=False):
             base[r[0]] = {
                 "main_name": r[1] or "", "corp_id": r[2] or 0, "last_login": r[3],
                 "n_chars": int(r[4] or 0), "n_blind": int(r[5] or 0),
-                "dias_login": (int(r[6]) if r[6] is not None else None),
+                "n_stale": int(r[6] or 0),
+                "dias_login": (int(r[7]) if r[7] is not None else None),
             }
     main_ids = list(base.keys())
     saved = 0
 
     for period in periods:
+        is_current = (period == current_period)
         pvp = {p.main_character_id: p for p in CharacterMonthlyPvp.objects.filter(period=period)}
         loss_by_main = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))
         for mid, ecorp, isk in CharacterKillRecord.objects.filter(
@@ -1490,20 +1501,27 @@ def compute_auditor_scores(periods=None, full=False):
 
         for mid, info in base.items():
             det = {}
-            # FUGA
-            dias = info["dias_login"]
-            if dias is None:
-                score_fuga = 50
-                det["dias_sin_login"] = None
+            # FUGA (estado actual — solo puntúa en el periodo en curso)
+            if is_current:
+                dias = info["dias_login"]
+                if dias is None:
+                    score_fuga = 50
+                    det["dias_sin_login"] = None
+                else:
+                    score_fuga = _auditor_clamp(dias / inact_days * 50)
+                    det["dias_sin_login"] = dias
             else:
-                score_fuga = _auditor_clamp(dias / inact_days * 50)
-                det["dias_sin_login"] = dias
-            # HUECOS
+                score_fuga = 0
+            # HUECOS (estado actual — solo puntúa en el periodo en curso)
             n_chars = info["n_chars"] or 1
-            score_huecos = _auditor_clamp(100 * info["n_blind"] / n_chars)
-            det["chars_ciegos"] = info["n_blind"]
-            det["n_chars"] = info["n_chars"]
-            # ESPÍAS
+            if is_current:
+                score_huecos = _auditor_clamp(100 * info["n_blind"] / n_chars)
+                det["chars_ciegos"] = info["n_blind"]
+                det["chars_sin_sync"] = info.get("n_stale", 0)
+                det["n_chars"] = info["n_chars"]
+            else:
+                score_huecos = 0
+            # ESPÍAS (del periodo)
             enemy = loss_by_main.get(mid, {})
             total_losses = sum(v[0] for v in enemy.values())
             if total_losses >= 3:
@@ -1529,12 +1547,18 @@ def compute_auditor_scores(periods=None, full=False):
             # Ciclo y financiero: aún no calculados en F1
             score_ciclo = 0
             score_financiero = 0
-            # Total renormalizado sobre las dimensiones activas en F1
+            # Total renormalizado sobre las dimensiones activas del periodo
             w_pvp = float(cfg.w_pvp); w_esp = float(cfg.w_espias)
             w_fug = float(cfg.w_fuga); w_hue = float(cfg.w_huecos)
-            sw = (w_pvp + w_esp + w_fug + w_hue) or 1
-            risk = (w_pvp * score_pvp + w_esp * score_espias +
-                    w_fug * score_fuga + w_hue * score_huecos) / sw
+            if is_current:
+                sw = (w_pvp + w_esp + w_fug + w_hue) or 1
+                risk = (w_pvp * score_pvp + w_esp * score_espias +
+                        w_fug * score_fuga + w_hue * score_huecos) / sw
+                dims_act = ["pvp", "espias", "fuga", "huecos"]
+            else:
+                sw = (w_pvp + w_esp) or 1
+                risk = (w_pvp * score_pvp + w_esp * score_espias) / sw
+                dims_act = ["pvp", "espias"]
             risk = _auditor_clamp(risk)
             if risk >= cfg.umbral_rojo:
                 nivel = "rojo"
@@ -1544,7 +1568,8 @@ def compute_auditor_scores(periods=None, full=False):
                 nivel = "amarillo"
             else:
                 nivel = "verde"
-            det["_dims_activas_f1"] = ["pvp", "espias", "fuga", "huecos"]
+            det["_dims_activas"] = dims_act
+            det["_periodo_actual"] = is_current
             AuditorRiskScore.objects.update_or_create(
                 main_character_id=mid, period=period,
                 defaults=dict(

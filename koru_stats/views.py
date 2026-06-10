@@ -370,7 +370,7 @@ def _build_top_mineros(corp_ids, inicio, fin):
         SELECT main_ec.character_name AS nombre, main_ec.character_id AS char_id,
                SUM(ml.quantity) AS total_unidades,
                ROUND(SUM(ml.quantity * it.volume), 2) AS total_m3,
-               ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS total_isk
+               ROUND(SUM(ml.quantity * COALESCE(omp.price_raw, 0)), 2) AS total_isk
         FROM corptools_characterminingledger ml
         JOIN corptools_characteraudit          cau     ON cau.id          = ml.character_id
         JOIN eveonline_evecharacter            ec      ON ec.id           = cau.character_id
@@ -378,7 +378,7 @@ def _build_top_mineros(corp_ids, inicio, fin):
         JOIN authentication_userprofile        up      ON up.user_id      = co.user_id
         JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
         JOIN eve_sde_itemtype it ON it.id = ml.type_name_id
-        LEFT JOIN eveuniverse_evemarketprice emp ON emp.eve_type_id = ml.type_name_id
+        LEFT JOIN koru_stats_oremarketprice omp ON omp.type_id = ml.type_name_id
         WHERE ml.date >= %s AND ml.date < %s
           AND ec.corporation_id IN ({placeholders})
         GROUP BY main_ec.id, main_ec.character_name, main_ec.character_id
@@ -414,7 +414,7 @@ def _build_ore_breakdown_corp(corp_ids, inicio, fin):
         SELECT it.name AS ore,
                SUM(ml.quantity) AS unidades,
                ROUND(SUM(ml.quantity * it.volume), 2) AS m3_total,
-               ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_estimado
+               ROUND(SUM(ml.quantity * COALESCE(omp.price_raw, 0)), 2) AS isk_estimado
         FROM corptools_characterminingledger ml
         JOIN corptools_characteraudit          cau     ON cau.id          = ml.character_id
         JOIN eveonline_evecharacter            ec      ON ec.id           = cau.character_id
@@ -422,7 +422,7 @@ def _build_ore_breakdown_corp(corp_ids, inicio, fin):
         JOIN authentication_userprofile        up      ON up.user_id      = co.user_id
         JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
         JOIN eve_sde_itemtype it ON it.id = ml.type_name_id
-        LEFT JOIN eveuniverse_evemarketprice emp ON emp.eve_type_id = ml.type_name_id
+        LEFT JOIN koru_stats_oremarketprice omp ON omp.type_id = ml.type_name_id
         WHERE ml.date >= %s AND ml.date < %s
           AND ec.corporation_id IN ({placeholders})
         GROUP BY it.id, it.name, it.volume
@@ -468,14 +468,14 @@ SQL_ORE_BREAKDOWN_PERSONAL = """
     SELECT it.name AS ore,
            SUM(ml.quantity) AS unidades,
            ROUND(SUM(ml.quantity * it.volume), 2) AS m3_total,
-           ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_estimado
+           ROUND(SUM(ml.quantity * COALESCE(omp.price_raw, 0)), 2) AS isk_estimado
     FROM corptools_characterminingledger ml
     JOIN corptools_characteraudit          cau ON cau.id          = ml.character_id
     JOIN eveonline_evecharacter            ec  ON ec.id           = cau.character_id
     JOIN authentication_characterownership co  ON co.character_id = ec.id
     JOIN authentication_userprofile        up  ON up.user_id      = co.user_id
     JOIN eve_sde_itemtype                  it  ON it.id           = ml.type_name_id
-    LEFT JOIN eveuniverse_evemarketprice   emp ON emp.eve_type_id = ml.type_name_id
+    LEFT JOIN koru_stats_oremarketprice   omp ON omp.type_id = ml.type_name_id
     WHERE up.main_character_id = %s AND ml.date >= %s AND ml.date < %s
     GROUP BY it.id, it.name, it.volume
     ORDER BY m3_total DESC
@@ -1304,7 +1304,7 @@ SQL_MOON_CORP_RESUMEN = """
            ig.name AS tier,
            SUM(ml.quantity) AS unidades,
            ROUND(SUM(ml.quantity * it.volume), 2) AS m3_total,
-           ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_estimado
+           ROUND(SUM(ml.quantity * COALESCE(omp.price_raw, 0)), 2) AS isk_estimado
     FROM corptools_characterminingledger ml
     JOIN corptools_characteraudit          cau     ON cau.id          = ml.character_id
     JOIN eveonline_evecharacter            ec      ON ec.id           = cau.character_id
@@ -1313,7 +1313,7 @@ SQL_MOON_CORP_RESUMEN = """
     JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
     JOIN eve_sde_itemtype                  it      ON it.id           = ml.type_name_id
     JOIN eve_sde_itemgroup                 ig      ON ig.id           = it.group_id
-    LEFT JOIN eveuniverse_evemarketprice   emp     ON emp.eve_type_id = ml.type_name_id
+    LEFT JOIN koru_stats_oremarketprice   omp     ON omp.type_id = ml.type_name_id
     WHERE ig.id IN (1884, 1920, 1921, 1922, 1923)
       AND ml.date >= %s AND ml.date < %s
     GROUP BY ig.id, ig.name
@@ -1328,7 +1328,7 @@ SQL_MOON_POR_PILOTO = """
            ig.name                AS tier,
            SUM(ml.quantity)       AS unidades,
            ROUND(SUM(ml.quantity * it.volume), 2) AS m3_total,
-           ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_estimado
+           ROUND(SUM(ml.quantity * COALESCE(omp.price_raw, 0)), 2) AS isk_estimado
     FROM corptools_characterminingledger ml
     JOIN corptools_characteraudit          cau     ON cau.id          = ml.character_id
     JOIN eveonline_evecharacter            ec      ON ec.id           = cau.character_id
@@ -1337,7 +1337,7 @@ SQL_MOON_POR_PILOTO = """
     JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
     JOIN eve_sde_itemtype                  it      ON it.id           = ml.type_name_id
     JOIN eve_sde_itemgroup                 ig      ON ig.id           = it.group_id
-    LEFT JOIN eveuniverse_evemarketprice   emp     ON emp.eve_type_id = ml.type_name_id
+    LEFT JOIN koru_stats_oremarketprice   omp     ON omp.type_id = ml.type_name_id
     WHERE ig.id IN (1884, 1920, 1921, 1922, 1923)
       AND ml.date >= %s AND ml.date < %s
     GROUP BY main_ec.id, main_ec.character_name, main_ec.character_id, ig.id, ig.name
@@ -1352,7 +1352,7 @@ SQL_MOON_DETALLE_ORE = """
            ig.name                AS tier,
            SUM(ml.quantity)       AS unidades,
            ROUND(SUM(ml.quantity * it.volume), 2) AS m3_total,
-           ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_estimado
+           ROUND(SUM(ml.quantity * COALESCE(omp.price_raw, 0)), 2) AS isk_estimado
     FROM corptools_characterminingledger ml
     JOIN corptools_characteraudit          cau     ON cau.id          = ml.character_id
     JOIN eveonline_evecharacter            ec      ON ec.id           = cau.character_id
@@ -1361,7 +1361,7 @@ SQL_MOON_DETALLE_ORE = """
     JOIN eveonline_evecharacter            main_ec ON main_ec.id      = up.main_character_id
     JOIN eve_sde_itemtype                  it      ON it.id           = ml.type_name_id
     JOIN eve_sde_itemgroup                 ig      ON ig.id           = it.group_id
-    LEFT JOIN eveuniverse_evemarketprice   emp     ON emp.eve_type_id = ml.type_name_id
+    LEFT JOIN koru_stats_oremarketprice   omp     ON omp.type_id = ml.type_name_id
     WHERE ig.id IN (1884, 1920, 1921, 1922, 1923)
       AND ml.date >= %s AND ml.date < %s
     GROUP BY main_ec.id, main_ec.character_name, main_ec.character_id, it.id, it.name, ig.id, ig.name
@@ -1589,11 +1589,11 @@ SQL_MOON_OBS_RESUMEN = """
         ig.name AS tier,
         SUM(mo.quantity)                                               AS unidades,
         ROUND(SUM(mo.quantity * it.volume), 2)                         AS m3_total,
-        ROUND(SUM(mo.quantity * COALESCE(emp.average_price, 0)), 2)    AS isk_estimado
+        ROUND(SUM(mo.quantity * COALESCE(omp.price_raw, 0)), 2)    AS isk_estimado
     FROM moons_miningobservation mo
     JOIN eve_sde_itemtype              it  ON it.id           = mo.type_id
     JOIN eve_sde_itemgroup             ig  ON ig.id           = it.group_id
-    LEFT JOIN eveuniverse_evemarketprice emp ON emp.eve_type_id = mo.type_id
+    LEFT JOIN koru_stats_oremarketprice omp ON omp.type_id = mo.type_id
     WHERE ig.id IN (1884, 1920, 1921, 1922, 1923)
       AND mo.last_updated >= %s AND mo.last_updated < %s
     GROUP BY ig.id, ig.name
@@ -1613,11 +1613,11 @@ SQL_MOON_OBS_POR_PILOTO = """
         ig.name                                          AS tier,
         SUM(mo.quantity)                                 AS unidades,
         ROUND(SUM(mo.quantity * it.volume), 2)           AS m3_total,
-        ROUND(SUM(mo.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_estimado
+        ROUND(SUM(mo.quantity * COALESCE(omp.price_raw, 0)), 2) AS isk_estimado
     FROM moons_miningobservation mo
     JOIN eve_sde_itemtype                it      ON it.id           = mo.type_id
     JOIN eve_sde_itemgroup               ig      ON ig.id           = it.group_id
-    LEFT JOIN eveuniverse_evemarketprice emp     ON emp.eve_type_id = mo.type_id
+    LEFT JOIN koru_stats_oremarketprice omp     ON omp.type_id = mo.type_id
     LEFT JOIN corptools_evename          en      ON en.eve_id       = mo.character_id
     LEFT JOIN corptools_evename          corp_en ON corp_en.eve_id  = mo.recorded_corporation_id
     LEFT JOIN eveonline_evecharacter     ec      ON ec.character_id = mo.character_id
@@ -1643,11 +1643,11 @@ SQL_MOON_OBS_DETALLE_ORE = """
         ig.name                                                            AS tier,
         SUM(mo.quantity)                                                   AS unidades,
         ROUND(SUM(mo.quantity * it.volume), 2)                             AS m3_total,
-        ROUND(SUM(mo.quantity * COALESCE(emp.average_price, 0)), 2)        AS isk_estimado
+        ROUND(SUM(mo.quantity * COALESCE(omp.price_raw, 0)), 2)        AS isk_estimado
     FROM moons_miningobservation mo
     JOIN eve_sde_itemtype              it       ON it.id           = mo.type_id
     JOIN eve_sde_itemgroup             ig       ON ig.id           = it.group_id
-    LEFT JOIN eveuniverse_evemarketprice emp    ON emp.eve_type_id = mo.type_id
+    LEFT JOIN koru_stats_oremarketprice omp    ON omp.type_id = mo.type_id
     LEFT JOIN corptools_evename        en       ON en.eve_id       = mo.character_id
     WHERE ig.id IN (1884, 1920, 1921, 1922, 1923)
       AND mo.last_updated >= %s AND mo.last_updated < %s
@@ -1913,12 +1913,12 @@ SQL_MOON_OBS_POR_LUNA = """
         COUNT(DISTINCT mo.character_id)                                    AS mineros,
         SUM(mo.quantity)                                                   AS unidades,
         ROUND(SUM(mo.quantity * it.volume), 2)                             AS m3_total,
-        ROUND(SUM(mo.quantity * COALESCE(emp.average_price, 0)), 2)        AS isk_estimado
+        ROUND(SUM(mo.quantity * COALESCE(omp.price_raw, 0)), 2)        AS isk_estimado
     FROM moons_miningobservation mo
     LEFT JOIN corptools_mapsystemmoon    mn  ON mn.moon_id      = mo.moon_id
     JOIN eve_sde_itemtype               it  ON it.id            = mo.type_id
     JOIN eve_sde_itemgroup              ig  ON ig.id            = it.group_id
-    LEFT JOIN eveuniverse_evemarketprice emp ON emp.eve_type_id = mo.type_id
+    LEFT JOIN koru_stats_oremarketprice omp ON omp.type_id = mo.type_id
     WHERE ig.id IN (1884, 1920, 1921, 1922, 1923)
       AND mo.last_updated >= %s AND mo.last_updated < %s
     GROUP BY mo.structure_id, mn.name
@@ -1934,11 +1934,11 @@ SQL_TENDENCIAS_MINERIA = """
     SELECT
         DATE_FORMAT(ml.date, '%%Y-%%m') AS periodo,
         SUM(ml.quantity) AS unidades,
-        ROUND(SUM(ml.quantity * COALESCE(emp.average_price, 0)), 2) AS isk_mineria
+        ROUND(SUM(ml.quantity * COALESCE(omp.price_raw, 0)), 2) AS isk_mineria
     FROM corptools_characterminingledger ml
     JOIN corptools_characteraudit          cau ON cau.id          = ml.character_id
     JOIN eveonline_evecharacter            ec  ON ec.id           = cau.character_id
-    LEFT JOIN eveuniverse_evemarketprice   emp ON emp.eve_type_id = ml.type_name_id
+    LEFT JOIN koru_stats_oremarketprice   omp ON omp.type_id = ml.type_name_id
     WHERE ml.date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
       AND ec.corporation_id IN ({placeholders})
     GROUP BY DATE_FORMAT(ml.date, '%%Y-%%m')

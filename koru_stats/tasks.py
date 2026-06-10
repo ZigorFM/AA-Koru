@@ -1457,18 +1457,17 @@ def compute_auditor_scores(periods=None, full=False):
     inact_days = max(1, int(cfg.inactividad_dias or 14))
     ph = ",".join(["%s"] * len(corp_ids))
 
-    # Salud de token + último login + corp por main (estado ACTUAL, no del periodo)
-    #   n_blind = personajes sin audit o con token desactivado (punto ciego duro)
-    #   n_stale = personajes con token vivo pero sync de wallet atrasado (solo informativo)
+    # Salud de visibilidad + último login + corp por main (estado ACTUAL, no del periodo)
+    #   n_blind = personajes sin audit o con wallet sin sincronizar > stale_days
+    #             (token caducado/revocado = perdimos visibilidad).
+    #   OJO: la columna 'active' de corptools NO indica salud de token (91% es 0 aunque sincronicen).
     with connection.cursor() as c:
         c.execute(
             "SELECT main_ec.character_id, MAX(main_ec.character_name), MAX(main_ec.corporation_id), "
             "       MAX(cau.last_known_login), COUNT(DISTINCT ec.id) AS n_chars, "
-            "       SUM(CASE WHEN cau.id IS NULL OR cau.active = 0 THEN 1 ELSE 0 END) AS n_blind, "
-            "       SUM(CASE WHEN cau.id IS NOT NULL AND cau.active = 1 "
-            "                 AND (cau.last_update_wallet IS NULL "
-            "                      OR cau.last_update_wallet < (NOW() - INTERVAL %s DAY)) "
-            "                THEN 1 ELSE 0 END) AS n_stale, "
+            "       SUM(CASE WHEN cau.id IS NULL OR cau.last_update_wallet IS NULL "
+            "                 OR cau.last_update_wallet < (NOW() - INTERVAL %s DAY) "
+            "                THEN 1 ELSE 0 END) AS n_blind, "
             "       DATEDIFF(NOW(), MAX(cau.last_known_login)) AS dias_login "
             "FROM eveonline_evecharacter ec "
             "JOIN authentication_characterownership co ON co.character_id = ec.id "
@@ -1482,8 +1481,7 @@ def compute_auditor_scores(periods=None, full=False):
             base[r[0]] = {
                 "main_name": r[1] or "", "corp_id": r[2] or 0, "last_login": r[3],
                 "n_chars": int(r[4] or 0), "n_blind": int(r[5] or 0),
-                "n_stale": int(r[6] or 0),
-                "dias_login": (int(r[7]) if r[7] is not None else None),
+                "dias_login": (int(r[6]) if r[6] is not None else None),
             }
     main_ids = list(base.keys())
     saved = 0
@@ -1519,7 +1517,6 @@ def compute_auditor_scores(periods=None, full=False):
             if is_current:
                 score_huecos = _auditor_clamp(100 * info["n_blind"] / n_chars)
                 det["chars_ciegos"] = info["n_blind"]
-                det["chars_sin_sync"] = info.get("n_stale", 0)
                 det["n_chars"] = info["n_chars"]
             else:
                 score_huecos = 0

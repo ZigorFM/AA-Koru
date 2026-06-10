@@ -192,9 +192,7 @@
         if (!actual) {
             L.push(['Huecos', dims[4], '<span class="text-muted">Estado actual; solo se evalúa en el periodo en curso.</span>']);
         } else {
-            var hh = '<b>' + (d.chars_ciegos || 0) + '</b> de <b>' + (d.n_chars || 0) + '</b> personajes sin token o desactivado.';
-            if (d.chars_sin_sync) hh += ' <span class="text-muted">(+' + d.chars_sin_sync + ' con sync atrasado, informativo).</span>';
-            L.push(['Huecos', dims[4], hh]);
+            L.push(['Huecos', dims[4], '<b>' + (d.chars_ciegos || 0) + '</b> de <b>' + (d.n_chars || 0) + '</b> personajes sin datos actualizados (token caducado/revocado, wallet sin sincronizar).']);
         }
         // Espías (idx 2)
         if ((d.losses || 0) >= 3)

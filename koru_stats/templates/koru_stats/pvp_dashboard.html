@@ -307,7 +307,7 @@
           <div class="btn-group btn-group-sm" id="toggleTend">
             <button class="btn btn-danger btn-sm active" data-tmode="ships">Ships</button>
             <button class="btn btn-outline-warning btn-sm" data-tmode="isk">ISK</button>
-            <button class="btn btn-outline-secondary btn-sm" data-tmode="part">Part.</button>
+            <button class="btn btn-outline-info btn-sm" data-tmode="part">Part.</button>
           </div>
         </div>
         <div class="card-body">
@@ -697,10 +697,10 @@
         const btn = e.target.closest('button[data-tmode]');
         if (!btn) return;
         document.querySelectorAll('#toggleTend button').forEach(b => {
-            b.className = 'btn btn-sm btn-outline-' + (b.dataset.tmode==='ships'?'danger':b.dataset.tmode==='isk'?'warning':'secondary');
+            b.className = 'btn btn-sm btn-outline-' + (b.dataset.tmode==='ships'?'danger':b.dataset.tmode==='isk'?'warning':'info');
         });
         const mode = btn.dataset.tmode;
-        btn.className = 'btn btn-sm btn-'+(mode==='ships'?'danger':mode==='isk'?'warning':'secondary')+' active';
+        btn.className = 'btn btn-sm btn-'+(mode==='ships'?'danger':mode==='isk'?'warning':'info')+' active';
         buildTend(mode);
     });
 

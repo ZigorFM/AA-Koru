@@ -1,0 +1,110 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Ticket {{ t.numero }}{% endblock %}
+
+{% block page_title %}
+    {% include "framework/header/page-header.html" with title="Ticket" subtitle="Detalle" %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:tickets_dashboard" as url_tk %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_tk title="Tickets" fa_icon="fa-solid fa-ticket-alt" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.kv-table th { width:34%; white-space:nowrap; vertical-align:top; color:#9aa0a6; font-weight:600; }
+.transcript { white-space:pre-wrap; font-size:.85rem; background:rgba(0,0,0,.2); border-radius:8px; padding:1rem; max-height:480px; overflow:auto; }
+.lvl-tag{font-weight:600}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <!-- Cabecera -->
+  <div class="card mb-3">
+    <div class="card-body d-flex flex-wrap align-items-center gap-3">
+      {% if t.main_character_id %}
+      <img src="https://images.evetech.net/characters/{{ t.main_character_id }}/portrait?size=64" width="56" height="56" class="rounded-circle" onerror="this.style.display='none'">
+      {% endif %}
+      <div class="flex-grow-1">
+        <h4 class="mb-1">
+          {% if t.tipo == 'reclutamiento' %}<span class="badge bg-info">Reclutamiento</span>
+          {% elif t.tipo == 'directores' %}<span class="badge bg-danger">Directores</span>
+          {% elif t.tipo == 'it' %}<span class="badge bg-primary">IT</span>
+          {% elif t.tipo == 'soporte' %}<span class="badge bg-secondary">Soporte</span>
+          {% elif t.tipo == 'asuntos' %}<span class="badge" style="background:#a855f7">Asuntos Internos</span>{% endif %}
+          {% if t.tipo_detalle %}<span class="text-muted">· {{ t.tipo_detalle }}</span>{% endif %}
+          <span class="ms-2">{{ t.main_character_name|default:"—" }}</span>
+        </h4>
+        <div class="text-muted small">
+          Ticket {{ t.numero|default:"—" }}
+          {% if t.discord_ticket %}· Discord #{{ t.discord_ticket }}{% endif %}
+          · {{ t.fecha|default:"—" }}
+          {% if t.estado %}· <span class="badge bg-light text-dark">{{ t.estado }}</span>{% endif %}
+          {% if t.claim_name %}· Claim: {{ t.claim_name }}{% endif %}
+          {% if t.alerta_peligro %}· <span class="badge bg-danger">⚠ Alerta/Peligro</span>{% endif %}
+          {% if t.tipo == 'directores' %}· {% if t.visible_piloto %}<span class="badge bg-success">Visible para el piloto</span>{% else %}<span class="badge bg-secondary">Oculto al piloto</span>{% endif %}{% endif %}
+        </div>
+      </div>
+      {% if t.main_character_id %}
+      <a href="/koru/auditor/piloto/{{ t.main_character_id }}/" class="btn btn-sm btn-outline-warning"><i class="fas fa-user-shield me-1"></i>Ficha Auditor</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-7">
+      {% if t.asunto %}
+      <div class="card mb-3"><div class="card-body">
+        <h6 class="card-title">Asunto</h6>
+        <p class="mb-0">{{ t.asunto }}</p>
+      </div></div>
+      {% endif %}
+
+      {% if notas %}
+      <div class="card mb-3"><div class="card-body">
+        <h6 class="card-title">Notas internas</h6>
+        <div class="transcript">{{ notas }}</div>
+      </div></div>
+      {% endif %}
+
+      {% if transcripcion_texto %}
+      <div class="card mb-3"><div class="card-body">
+        <h6 class="card-title">Transcripción</h6>
+        <div class="transcript">{{ transcripcion_texto }}</div>
+      </div></div>
+      {% endif %}
+    </div>
+
+    <div class="col-lg-5">
+      {% if campos %}
+      <div class="card mb-3"><div class="card-body">
+        <h6 class="card-title">Detalle</h6>
+        <table class="table table-sm kv-table mb-0">
+          <tbody>
+          {% for c in campos %}
+            <tr><th>{{ c.k }}</th><td>{{ c.v }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div></div>
+      {% endif %}
+
+      {% if archivos %}
+      <div class="card mb-3"><div class="card-body">
+        <h6 class="card-title">Archivos / Transcripción</h6>
+        <ul class="list-unstyled mb-0">
+        {% for f in archivos %}
+          <li><a href="{{ f.url }}" target="_blank" rel="noopener"><i class="fas fa-paperclip me-1"></i>{{ f.name }}</a></li>
+        {% endfor %}
+        </ul>
+      </div></div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

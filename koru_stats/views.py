@@ -2950,3 +2950,55 @@ def tickets_dashboard(request):
         "tickets": tickets, "total": total,
     }
     return render(request, "koru_stats/tickets_dashboard.html", context)
+
+
+@login_required
+def ticket_detail(request, ticket_id):
+    from django.http import HttpResponseForbidden, Http404
+    from .models import Ticket
+
+    t = Ticket.objects.filter(id=ticket_id).first()
+    if not t:
+        raise Http404("Ticket no encontrado")
+    if t.tipo not in _tickets_allowed(request.user):
+        return HttpResponseForbidden("No tienes permiso para ver este tipo de ticket.")
+
+    extra = t.extra or {}
+    SKIP = {
+        "id", "order", "Main", "Claim", "Discord", "Personaje", "Usuario Discord",
+        "Nº", "Número", "Nº Ticket Discord", "Fecha", "Estado", "Tipo", "Asunto",
+        "Notas", "Alerta/Peligro", "Visible para piloto", "Última modificación",
+        "Transcripción", "Transcripción texto", "Transcripción Auditoría",
+    }
+    campos = []
+    archivos = []
+    for k, v in extra.items():
+        if k in SKIP or v in (None, "", [], {}):
+            continue
+        if isinstance(v, list) and v and isinstance(v[0], dict) and "url" in v[0]:
+            for f in v:
+                if f.get("url"):
+                    archivos.append({"name": f.get("name") or k, "url": f["url"]})
+            continue
+        if isinstance(v, list):
+            v = ", ".join(str(x.get("value", x)) if isinstance(x, dict) else str(x) for x in v)
+        elif isinstance(v, dict):
+            v = v.get("value", str(v))
+        campos.append({"k": k, "v": v})
+
+    # transcripción (archivo) de los campos de transcripción
+    for tk in ("Transcripción", "Transcripción Auditoría"):
+        val = extra.get(tk)
+        if isinstance(val, list):
+            for f in val:
+                if isinstance(f, dict) and f.get("url"):
+                    archivos.append({"name": f.get("name") or tk, "url": f["url"]})
+
+    context = {
+        "t": t,
+        "campos": campos,
+        "archivos": archivos,
+        "notas": extra.get("Notas", ""),
+        "transcripcion_texto": extra.get("Transcripción texto") or extra.get("Transcripción Auditoría") or "",
+    }
+    return render(request, "koru_stats/ticket_detail.html", context)

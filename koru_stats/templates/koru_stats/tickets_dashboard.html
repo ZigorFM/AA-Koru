@@ -100,9 +100,9 @@
               <td><span class="badge bg-light text-dark">{{ t.estado|default:"—" }}</span></td>
               <td class="small text-muted">{{ t.claim_name|default:"—" }}</td>
               <td class="small text-muted">{{ t.fecha|default:"—" }}</td>
-              <td>
-                {% if t.tipo == 'directores' and t.visible_piloto %}<i class="fas fa-eye text-success" title="Visible para el piloto"></i>{% endif %}
-                {% if t.discord_ticket %}<span class="text-muted small">#{{ t.discord_ticket }}</span>{% endif %}
+              <td class="text-end">
+                {% if t.tipo == 'directores' and t.visible_piloto %}<i class="fas fa-eye text-success me-1" title="Visible para el piloto"></i>{% endif %}
+                <a href="{% url 'koru_stats:ticket_detail' t.id %}" class="btn btn-sm btn-outline-info">Abrir</a>
               </td>
             </tr>
           {% empty %}

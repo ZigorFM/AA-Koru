@@ -1964,10 +1964,11 @@ def sync_tickets():
     def _clean_extra(row):
         out = {}
         for k, val in row.items():
-            # descartar campos de archivo (listas de dicts con mime_type) para no inflar el JSON
+            # campos de archivo: guardar solo nombre+url (slim) para enlazar la transcripción
             if isinstance(val, list) and val and isinstance(val[0], dict) and "mime_type" in val[0]:
-                continue
-            out[k] = val
+                out[k] = [{"name": x.get("visible_name", ""), "url": x.get("url", "")} for x in val]
+            else:
+                out[k] = val
         return out
 
     all_rows = []  # (tid, tipo, row_id, parsed_dict, main_name)

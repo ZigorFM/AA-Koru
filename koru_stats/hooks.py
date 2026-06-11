@@ -98,6 +98,29 @@ def register_menu_auditor():
     )
 
 
+class TicketsMenuHook(MenuItemHook):
+    def render(self, request):
+        perms = [
+            "koru_stats.tickets_admin", "koru_stats.tickets_reclutamiento",
+            "koru_stats.tickets_directores", "koru_stats.tickets_asuntos_internos",
+            "koru_stats.tickets_it",
+        ]
+        if any(request.user.has_perm(p) for p in perms):
+            return super().render(request)
+        return ""
+
+
+@hooks.register("menu_item_hook")
+def register_menu_tickets():
+    return TicketsMenuHook(
+        "🌀 Koru — Tickets",
+        "fas fa-ticket-alt fa-fw",
+        "koru_stats:tickets_dashboard",
+        navactive=["koru_stats:tickets_dashboard"],
+        order=1205,
+    )
+
+
 @hooks.register("url_hook")
 def register_urls():
     return UrlHook(urls, "koru_stats", r"^koru/")

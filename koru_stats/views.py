@@ -932,6 +932,17 @@ def mi_dashboard(request):
             "ships_lost":      [int(r["ships_lost"] or 0) for r in pvp_tendencia],
         }),
     }
+
+    # Mis tickets — visibilidad: tipos de cara al piloto + Directores con flag; NUNCA Asuntos Internos
+    from django.db.models import Q as _Q
+    from .models import Ticket as _Ticket
+    _vis = _Q(tipo__in=["reclutamiento", "it", "soporte"]) | _Q(tipo="directores", visible_piloto=True)
+    context["mis_tickets"] = list(
+        _Ticket.objects.filter(_vis, main_character_id=main.character_id)
+        .order_by("-fecha")
+        .values("tipo", "numero", "estado", "tipo_detalle", "asunto", "fecha", "discord_ticket")[:100]
+    )
+
     return render(request, "koru_stats/mi_dashboard.html", context)
 
 
@@ -2882,3 +2893,60 @@ def auditor_pilot(request, main_id):
         "ciclo": ciclo,
     }
     return render(request, "koru_stats/auditor_pilot.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Koru — Tickets (staff, por rol)
+# ---------------------------------------------------------------------------
+
+def _tickets_allowed(user):
+    """Tipos de ticket que el usuario puede ver según sus permisos."""
+    if user.has_perm("koru_stats.tickets_admin"):
+        return {"reclutamiento", "directores", "asuntos", "it", "soporte"}
+    allowed = set()
+    if user.has_perm("koru_stats.tickets_reclutamiento"):
+        allowed.add("reclutamiento")
+    if user.has_perm("koru_stats.tickets_directores"):
+        allowed.add("directores")
+    if user.has_perm("koru_stats.tickets_asuntos_internos"):
+        allowed.add("asuntos")
+    if user.has_perm("koru_stats.tickets_it"):
+        allowed.update({"it", "soporte"})
+    return allowed
+
+
+@login_required
+def tickets_dashboard(request):
+    from django.db.models import Count
+    from .models import Ticket
+
+    allowed = _tickets_allowed(request.user)
+    if not allowed:
+        return render(request, "koru_stats/tickets_dashboard.html", {"sin_acceso": True})
+
+    tipo_sel   = request.GET.get("tipo", "")
+    estado_sel = request.GET.get("estado", "")
+    q          = request.GET.get("q", "").strip()
+
+    base_qs = Ticket.objects.filter(tipo__in=allowed)
+    qs = base_qs
+    if tipo_sel in allowed:
+        qs = qs.filter(tipo=tipo_sel)
+    if estado_sel:
+        qs = qs.filter(estado=estado_sel)
+    if q:
+        qs = qs.filter(main_character_name__icontains=q)
+
+    por_tipo = list(base_qs.values("tipo").annotate(n=Count("id")).order_by("tipo"))
+    estados = list(base_qs.exclude(estado="").values_list("estado", flat=True).distinct().order_by("estado"))
+    total = qs.count()
+    tickets = list(qs.order_by("-fecha", "-baserow_row_id")[:300].values(
+        "id", "tipo", "numero", "discord_ticket", "main_character_name", "main_character_id",
+        "estado", "tipo_detalle", "asunto", "claim_name", "fecha", "alerta_peligro", "visible_piloto"))
+
+    context = {
+        "allowed": sorted(allowed), "por_tipo": por_tipo, "estados": estados,
+        "tipo_sel": tipo_sel, "estado_sel": estado_sel, "q": q,
+        "tickets": tickets, "total": total,
+    }
+    return render(request, "koru_stats/tickets_dashboard.html", context)

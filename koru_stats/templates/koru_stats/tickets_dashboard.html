@@ -1,0 +1,120 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Tickets{% endblock %}
+
+{% block page_title %}
+    {% include "framework/header/page-header.html" with title="Koru — Tickets" subtitle="Gestión de tickets por rol" %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.kpi-card .kpi-val { font-size:1.7rem; font-weight:700; line-height:1; }
+.kpi-card .kpi-lbl { font-size:.72rem; opacity:.75; }
+.tk-recl{background:#0dcaf0;color:#111}.tk-dir{background:#ef4444;color:#fff}
+.tk-it{background:#3b82f6;color:#fff}.tk-sop{background:#6c757d;color:#fff}.tk-asu{background:#a855f7;color:#fff}
+.badge-tipo{font-weight:600}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+{% if sin_acceso %}
+  <div class="alert alert-warning">No tienes permiso para ver tickets. Pide acceso a un administrador.</div>
+{% else %}
+
+  <!-- KPIs por tipo (según permiso) -->
+  <div class="row g-2 mb-3">
+    {% for p in por_tipo %}
+    <div class="col">
+      <div class="card kpi-card text-center h-100"><div class="card-body py-2">
+        <div class="kpi-val">{{ p.n }}</div>
+        <div class="kpi-lbl">
+          {% if p.tipo == 'reclutamiento' %}Reclutamiento{% elif p.tipo == 'directores' %}Directores
+          {% elif p.tipo == 'it' %}IT{% elif p.tipo == 'soporte' %}Soporte
+          {% elif p.tipo == 'asuntos' %}Asuntos Internos{% else %}{{ p.tipo }}{% endif %}
+        </div>
+      </div></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Filtros -->
+  <form method="get" class="row g-2 mb-3 align-items-end">
+    <div class="col-auto">
+      <label class="form-label small mb-0 text-muted">Tipo</label>
+      <select name="tipo" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        {% for t in allowed %}
+        <option value="{{ t }}" {% if t == tipo_sel %}selected{% endif %}>
+          {% if t == 'reclutamiento' %}Reclutamiento{% elif t == 'directores' %}Directores{% elif t == 'it' %}IT{% elif t == 'soporte' %}Soporte{% elif t == 'asuntos' %}Asuntos Internos{% else %}{{ t }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-0 text-muted">Estado</label>
+      <select name="estado" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        {% for e in estados %}<option value="{{ e }}" {% if e == estado_sel %}selected{% endif %}>{{ e }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-0 text-muted">Piloto</label>
+      <input type="text" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Nombre del main">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-sm btn-info"><i class="fas fa-search"></i> Filtrar</button>
+    </div>
+    <div class="col-auto ms-auto text-muted small align-self-center">{{ total }} resultado{{ total|pluralize }}</div>
+  </form>
+
+  <!-- Tabla -->
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead><tr>
+            <th>Tipo</th><th>Nº</th><th>Piloto</th><th>Asunto</th><th>Estado</th><th>Claim</th><th>Fecha</th><th></th>
+          </tr></thead>
+          <tbody>
+          {% for t in tickets %}
+            <tr {% if t.alerta_peligro %}class="table-danger"{% endif %}>
+              <td>
+                {% if t.tipo == 'reclutamiento' %}<span class="badge badge-tipo tk-recl">Recl.</span>
+                {% elif t.tipo == 'directores' %}<span class="badge badge-tipo tk-dir">Dir.</span>
+                {% elif t.tipo == 'it' %}<span class="badge badge-tipo tk-it">IT</span>
+                {% elif t.tipo == 'soporte' %}<span class="badge badge-tipo tk-sop">Sop.</span>
+                {% elif t.tipo == 'asuntos' %}<span class="badge badge-tipo tk-asu">A.Int.</span>
+                {% else %}<span class="badge bg-dark">{{ t.tipo }}</span>{% endif %}
+                {% if t.tipo_detalle %}<small class="text-muted ms-1">{{ t.tipo_detalle }}</small>{% endif %}
+              </td>
+              <td class="text-muted small">{{ t.numero|default:t.discord_ticket }}</td>
+              <td>
+                {% if t.main_character_id %}
+                  <img src="https://images.evetech.net/characters/{{ t.main_character_id }}/portrait?size=28" width="22" height="22" class="rounded-circle me-1" onerror="this.style.display='none'">
+                {% endif %}{{ t.main_character_name|default:"—" }}
+              </td>
+              <td class="small">{{ t.asunto|default:"—"|truncatechars:70 }}</td>
+              <td><span class="badge bg-light text-dark">{{ t.estado|default:"—" }}</span></td>
+              <td class="small text-muted">{{ t.claim_name|default:"—" }}</td>
+              <td class="small text-muted">{{ t.fecha|default:"—" }}</td>
+              <td>
+                {% if t.tipo == 'directores' and t.visible_piloto %}<i class="fas fa-eye text-success" title="Visible para el piloto"></i>{% endif %}
+                {% if t.discord_ticket %}<span class="text-muted small">#{{ t.discord_ticket }}</span>{% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" class="text-center text-muted py-4">Sin tickets para este filtro.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% if total > 300 %}<p class="text-muted small mt-2">Mostrando los 300 más recientes. Afina con los filtros.</p>{% endif %}
+
+{% endif %}
+</div>
+{% endblock %}

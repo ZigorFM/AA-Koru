@@ -673,6 +673,38 @@
 
     </div>{# /tab-content #}
 
+    <!-- Mis Tickets -->
+    <div class="card mt-4">
+      <div class="card-header"><h5 class="mb-0"><i class="fas fa-ticket-alt me-2"></i>Mis Tickets</h5></div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead><tr><th>Tipo</th><th>Nº</th><th>Asunto</th><th>Estado</th><th>Fecha</th></tr></thead>
+            <tbody>
+            {% for t in mis_tickets %}
+              <tr>
+                <td>
+                  {% if t.tipo == 'reclutamiento' %}<span class="badge bg-info">Reclutamiento</span>
+                  {% elif t.tipo == 'directores' %}<span class="badge bg-danger">Directores</span>
+                  {% elif t.tipo == 'it' %}<span class="badge bg-primary">IT</span>
+                  {% elif t.tipo == 'soporte' %}<span class="badge bg-secondary">Soporte</span>
+                  {% else %}<span class="badge bg-dark">{{ t.tipo }}</span>{% endif %}
+                  {% if t.tipo_detalle %}<small class="text-muted ms-1">{{ t.tipo_detalle }}</small>{% endif %}
+                </td>
+                <td class="text-muted">{{ t.numero|default:t.discord_ticket }}</td>
+                <td>{{ t.asunto|default:"—"|truncatechars:80 }}</td>
+                <td><span class="badge bg-light text-dark">{{ t.estado|default:"—" }}</span></td>
+                <td class="small text-muted">{{ t.fecha|default:"—" }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5" class="text-center text-muted py-3">No tienes tickets visibles.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
 {% endif %}
 </div>
 {% endblock %}

@@ -2981,7 +2981,10 @@ def ticket_detail(request, ticket_id):
         if isinstance(v, list) and v and isinstance(v[0], dict) and "url" in v[0]:
             for f in v:
                 if f.get("url"):
-                    adjuntos.append({"name": f.get("name") or k, "url": f["url"]})
+                    nm = f.get("name") or k
+                    low = (nm + " " + f["url"]).lower()
+                    is_img = any(e in low for e in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"))
+                    adjuntos.append({"name": nm, "url": f["url"], "is_img": is_img})
             continue
         if isinstance(v, list):
             v = ", ".join(str(x.get("value", x)) if isinstance(x, dict) else str(x) for x in v)
@@ -2998,7 +3001,7 @@ def ticket_detail(request, ticket_id):
                     transcripcion_files.append({"name": f.get("name") or tk, "url": f["url"]})
 
     notas = extra.get("Notas", "") or ""
-    transcripcion_texto = extra.get("Transcripción texto") or ""
+    transcripcion_texto = extra.get("Transcripción texto") or extra.get("Transcripción Auditoría") or ""
 
     # Sustituir usuarios/IDs de Discord por el nombre del main (si lo conocemos)
     dmap = {}

@@ -113,10 +113,17 @@
       {% if adjuntos %}
       <div class="card mb-3"><div class="card-body">
         <h6 class="card-title">Adjuntos</h6>
+        <div class="d-flex flex-wrap gap-2 mb-2">
+          {% for f in adjuntos %}{% if f.is_img %}
+          <a href="{{ f.url }}" target="_blank" rel="noopener" title="{{ f.name }}">
+            <img src="{{ f.url }}" style="height:96px;border-radius:6px;object-fit:cover" onerror="this.style.display='none'">
+          </a>
+          {% endif %}{% endfor %}
+        </div>
         <ul class="list-unstyled mb-0">
-        {% for f in adjuntos %}
+        {% for f in adjuntos %}{% if not f.is_img %}
           <li><a href="{{ f.url }}" target="_blank" rel="noopener"><i class="fas fa-paperclip me-1"></i>{{ f.name }}</a></li>
-        {% endfor %}
+        {% endif %}{% endfor %}
         </ul>
       </div></div>
       {% endif %}

@@ -1916,3 +1916,115 @@ def detect_lifecycle_events():
                 o.main_character_id, n.main_character_id)
     logger.info("koru detect_lifecycle_events: %s eventos (prev=%s)", created, prev)
     return created
+
+
+# ===========================================================================
+# TICKETS — sync read-only desde Baserow (koru_tickets T1)
+# Schedule sugerido: crontab(minute='*/15')  -> koru_stats.tasks.sync_tickets
+# ===========================================================================
+
+@shared_task
+def sync_tickets():
+    """Sincroniza los tickets de Baserow (espejo read-only) a la tabla Ticket."""
+    from datetime import date
+    from .models import TicketsConfig, Ticket
+
+    cfg = TicketsConfig.objects.filter(tag="default").first()
+    if not cfg or not cfg.enabled or not cfg.baserow_token:
+        logger.warning("koru sync_tickets: sin config/token o deshabilitado")
+        return 0
+    base = cfg.baserow_base_url.rstrip("/")
+    headers = {"Authorization": f"Token {cfg.baserow_token}"}
+    tablas = [
+        (502, "reclutamiento"), (503, "directores"), (1702, "asuntos"),
+        (510, "it"), (508, "soporte"),
+    ]
+
+    def _sel(v):
+        return v.get("value", "") if isinstance(v, dict) else ""
+
+    def _multisel(v):
+        if isinstance(v, list):
+            return ", ".join(x.get("value", "") for x in v if isinstance(x, dict))
+        return ""
+
+    def _link1(v):
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            return v[0].get("value", "") or ""
+        return ""
+
+    def _pdate(v):
+        if not v:
+            return None
+        try:
+            return date.fromisoformat(str(v)[:10])
+        except (ValueError, TypeError):
+            return None
+
+    def _clean_extra(row):
+        out = {}
+        for k, val in row.items():
+            # descartar campos de archivo (listas de dicts con mime_type) para no inflar el JSON
+            if isinstance(val, list) and val and isinstance(val[0], dict) and "mime_type" in val[0]:
+                continue
+            out[k] = val
+        return out
+
+    all_rows = []  # (tid, tipo, row_id, parsed_dict, main_name)
+    for tid, tipo in tablas:
+        page = 1
+        while True:
+            try:
+                r = http_requests.get(
+                    f"{base}/api/database/rows/table/{tid}/",
+                    params={"user_field_names": "true", "size": 200, "page": page},
+                    headers=headers, timeout=30)
+                r.raise_for_status()
+                data = r.json()
+            except Exception as exc:
+                logger.error("koru sync_tickets tabla %s pag %s: %s", tid, page, exc)
+                break
+            for row in data.get("results", []):
+                main_name = _link1(row.get("Main"))
+                parsed = dict(
+                    numero=str(row.get("Nº") or row.get("Número") or ""),
+                    discord_ticket=str(row.get("Nº Ticket Discord") or ""),
+                    fecha=_pdate(row.get("Fecha")),
+                    estado=_sel(row.get("Estado")),
+                    tipo_detalle=(_multisel(row.get("Tipo")) or _sel(row.get("Tipo")))[:100],
+                    asunto=str(row.get("Asunto") or "")[:5000],
+                    main_character_name=main_name[:100],
+                    claim_name=_link1(row.get("Claim"))[:100],
+                    alerta_peligro=bool(row.get("Alerta/Peligro")),
+                    visible_piloto=bool(row.get("Visible para piloto")),
+                    extra=_clean_extra(row),
+                )
+                all_rows.append((tid, tipo, row.get("id"), parsed, main_name))
+            if not data.get("next"):
+                break
+            page += 1
+
+    # Resolver main_character_name -> character_id de EVE (para cruzar con el Auditor)
+    nombres = sorted({mn for *_rest, mn in all_rows if mn})
+    name_to_id = {}
+    if nombres:
+        ph = ",".join(["%s"] * len(nombres))
+        with connection.cursor() as c:
+            c.execute(
+                f"SELECT character_name, character_id FROM eveonline_evecharacter "
+                f"WHERE character_name IN ({ph})", nombres)
+            for nm, cid in c.fetchall():
+                name_to_id[nm] = cid
+
+    total = 0
+    for tid, tipo, rid, parsed, main_name in all_rows:
+        if rid is None:
+            continue
+        parsed["main_character_id"] = name_to_id.get(main_name, 0)
+        Ticket.objects.update_or_create(
+            baserow_table_id=tid, baserow_row_id=rid,
+            defaults=dict(tipo=tipo, **parsed),
+        )
+        total += 1
+    logger.info("koru sync_tickets: %s tickets sincronizados", total)
+    return total

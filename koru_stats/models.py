@@ -16,6 +16,11 @@ class General(models.Model):
             ("fc_access",           "Puede ver panel FC/Director"),
             ("auditor_access",      "Puede ver el panel Auditor (seguridad)"),
             ("auditor_admin",       "Puede configurar el Auditor y revisar/descartar alertas"),
+            ("tickets_reclutamiento",   "Tickets: ve Reclutamiento"),
+            ("tickets_directores",      "Tickets: ve A Directores"),
+            ("tickets_asuntos_internos","Tickets: ve Asuntos Internos"),
+            ("tickets_it",              "Tickets: ve IT y Soporte"),
+            ("tickets_admin",           "Tickets: ve todos los tipos"),
         )
 
 
@@ -532,3 +537,72 @@ class CharacterLifecycleEvent(models.Model):
 
     def __str__(self):
         return f"{self.fecha:%Y-%m-%d} | {self.character_name} | {self.evento}"
+
+
+# ---------------------------------------------------------------------------
+# Tickets — espejo de Baserow (koru_tickets, T1)
+# ---------------------------------------------------------------------------
+
+class TicketsConfig(models.Model):
+    """Config del sync de tickets desde Baserow (token, url) — singleton."""
+    tag             = models.CharField(max_length=50, default="default", unique=True)
+    baserow_base_url = models.CharField(max_length=255, default="https://rekipiloto.sinzg.synology.me")
+    baserow_token    = models.CharField(max_length=255, blank=True, default="", help_text="Token de Baserow (solo lectura)")
+    enabled          = models.BooleanField(default=True)
+    updated_at       = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Configuración de Tickets"
+        verbose_name_plural = "Configuración de Tickets"
+
+    def __str__(self):
+        return f"TicketsConfig[{self.tag}] — {'ON' if self.enabled else 'OFF'}"
+
+
+class Ticket(models.Model):
+    """Espejo unificado de un ticket de Baserow (cualquier tabla)."""
+
+    TIPO_CHOICES = (
+        ("reclutamiento", "Reclutamiento"),
+        ("directores",    "A Directores"),
+        ("asuntos",       "Asuntos Internos"),
+        ("it",            "A IT"),
+        ("soporte",       "A Soporte"),
+    )
+
+    tipo             = models.CharField(max_length=20, db_index=True, choices=TIPO_CHOICES)
+    baserow_table_id = models.IntegerField(db_index=True)
+    baserow_row_id   = models.IntegerField()
+
+    numero           = models.CharField(max_length=30, blank=True, default="")   # "Nº"
+    discord_ticket   = models.CharField(max_length=30, blank=True, default="")   # "Nº Ticket Discord"
+    fecha            = models.DateField(null=True, blank=True)
+    estado           = models.CharField(max_length=50, blank=True, default="")
+    tipo_detalle     = models.CharField(max_length=100, blank=True, default="")  # el "Tipo" select de Baserow
+    asunto           = models.TextField(blank=True, default="")
+
+    main_character_name = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    main_character_id   = models.IntegerField(default=0, db_index=True)           # resuelto vía AA
+    claim_name          = models.CharField(max_length=100, blank=True, default="")
+
+    alerta_peligro   = models.BooleanField(default=False)
+    visible_piloto   = models.BooleanField(default=False)  # flag "Visible para piloto" (solo Directores)
+
+    extra            = models.JSONField(default=dict, blank=True)  # campos específicos (checks auditoría, fase, etc.)
+    synced_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Ticket (espejo)"
+        verbose_name_plural = "Tickets (espejo)"
+        ordering = ["-fecha", "-baserow_row_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["baserow_table_id", "baserow_row_id"],
+                                    name="unique_ticket_baserow"),
+        ]
+        indexes = [
+            models.Index(fields=["tipo", "estado"],          name="koru_ticket_tipo_estado"),
+            models.Index(fields=["main_character_id", "tipo"], name="koru_ticket_main_tipo"),
+        ]
+
+    def __str__(self):
+        return f"[{self.tipo}] {self.numero} | {self.main_character_name} | {self.estado}"

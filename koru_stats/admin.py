@@ -8,6 +8,7 @@ from .models import (
     AuditorConfig, AuditorRiskScore, AuditorAlert,
     KoruMarketPrice, CharacterValueSnapshot,
     CharacterOwnershipSnapshot, CharacterLifecycleEvent,
+    TicketsConfig, Ticket,
 )
 
 
@@ -248,3 +249,31 @@ class CharacterLifecycleEventAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(TicketsConfig)
+class TicketsConfigAdmin(admin.ModelAdmin):
+    list_display    = ("tag", "enabled", "baserow_base_url", "updated_at")
+    readonly_fields = ("updated_at",)
+    fieldsets = (
+        (None, {
+            "fields": ("tag", "enabled", "updated_at"),
+        }),
+        ("Baserow", {
+            "description": "URL base y token de SOLO LECTURA de Baserow para el sync de tickets.",
+            "fields": ("baserow_base_url", "baserow_token"),
+        }),
+    )
+
+
+@admin.register(Ticket)
+class TicketAdmin(admin.ModelAdmin):
+    list_display  = ("tipo", "numero", "discord_ticket", "main_character_name",
+                     "estado", "tipo_detalle", "claim_name", "visible_piloto", "alerta_peligro", "fecha")
+    list_filter   = ("tipo", "estado", "visible_piloto", "alerta_peligro")
+    search_fields = ("main_character_name", "numero", "discord_ticket", "asunto")
+    ordering      = ("-fecha", "-baserow_row_id")
+    readonly_fields = ("synced_at",)
+
+    def has_add_permission(self, request):
+        return False  # La puebla el sync

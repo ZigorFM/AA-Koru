@@ -1,0 +1,121 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Tickets · Estadísticas{% endblock %}
+
+{% block page_title %}
+    {% include "framework/header/page-header.html" with title="Koru — Tickets" subtitle="Estadísticas" %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.kpi-card .kpi-val { font-size:1.8rem; font-weight:700; line-height:1; }
+.kpi-card .kpi-lbl { font-size:.72rem; opacity:.75; }
+.nav-pills .nav-link { padding:.3rem .9rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <ul class="nav nav-pills mb-3">
+    <li class="nav-item"><a class="nav-link" href="{% url 'koru_stats:tickets_dashboard' %}">Lista</a></li>
+    <li class="nav-item"><a class="nav-link active" href="{% url 'koru_stats:tickets_stats' %}">Estadísticas</a></li>
+  </ul>
+
+{% if sin_acceso %}
+  <div class="alert alert-warning">No tienes permiso para ver tickets.</div>
+{% else %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-5">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="card-title">Tickets por tipo</h6>
+        <canvas id="chTipo" height="200"></canvas>
+      </div></div>
+    </div>
+    <div class="col-lg-7">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="card-title">Volumen por mes (últimos 12)</h6>
+        <canvas id="chMes" height="200"></canvas>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="card mb-3"><div class="card-body">
+    <h6 class="card-title">Carga por staff (tickets reclamados)</h6>
+    <canvas id="chClaim" height="120"></canvas>
+  </div></div>
+
+  {% if recl %}
+  <h5 class="mt-4 mb-2"><i class="fas fa-user-plus me-2"></i>Reclutamiento</h5>
+  <div class="row g-2 mb-3">
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val">{{ recl.total }}</div><div class="kpi-lbl">Solicitudes</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val text-success">{{ recl.aprob }}</div><div class="kpi-lbl">Pasan a corp</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val text-danger">{{ recl.rech }}</div><div class="kpi-lbl">Rechazados</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val">{{ recl.tasa_acept }}%</div><div class="kpi-lbl">Tasa aceptación</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val text-info">{{ recl.auth_ok }}</div><div class="kpi-lbl">Auth registrado</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2"><div class="kpi-val text-info">{{ recl.disc_ok }}</div><div class="kpi-lbl">Discord vinculado</div></div></div></div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-4"><div class="card h-100"><div class="card-body">
+      <h6 class="card-title">Estado de las solicitudes</h6><canvas id="chEstado" height="220"></canvas>
+    </div></div></div>
+    <div class="col-lg-4"><div class="card h-100"><div class="card-body">
+      <h6 class="card-title">¿Dónde nos conociste?</h6><canvas id="chFuente" height="220"></canvas>
+    </div></div></div>
+    <div class="col-lg-4"><div class="card h-100"><div class="card-body">
+      <h6 class="card-title">Experiencia en EVE</h6><canvas id="chExp" height="220"></canvas>
+    </div></div></div>
+  </div>
+
+  <div class="card mb-4"><div class="card-body">
+    <h6 class="card-title">País de origen</h6><canvas id="chPais" height="110"></canvas>
+  </div></div>
+  {% endif %}
+
+{% endif %}
+</div>
+{% endblock %}
+
+{% block extra_javascript %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+    if (typeof Chart === 'undefined') return;
+    var PAL = ['#0dcaf0','#ef4444','#3b82f6','#a855f7','#10b981','#f59e0b','#6c757d','#f97316','#8b5cf6','#06b6d4','#e11d48','#22c55e'];
+    var TIPO_LBL = {reclutamiento:'Reclutamiento', directores:'Directores', it:'IT', soporte:'Soporte', asuntos:'Asuntos Internos'};
+
+    function doughnut(id, labels, data){
+        var el = document.getElementById(id); if(!el) return;
+        new Chart(el, {type:'doughnut', data:{labels:labels, datasets:[{data:data, backgroundColor:PAL}]},
+            options:{plugins:{legend:{position:'right', labels:{boxWidth:12, font:{size:11}}}}}});
+    }
+    function hbar(id, labels, data, color){
+        var el = document.getElementById(id); if(!el) return;
+        new Chart(el, {type:'bar', data:{labels:labels, datasets:[{data:data, backgroundColor:color||'#3b82f6'}]},
+            options:{indexAxis:'y', plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true}}}});
+    }
+
+    var porTipo = {{ por_tipo_json|safe }};
+    doughnut('chTipo', porTipo.map(function(x){return TIPO_LBL[x.tipo]||x.tipo;}), porTipo.map(function(x){return x.n;}));
+
+    var porMes = {{ por_mes_json|safe }};
+    (function(){ var el=document.getElementById('chMes'); if(!el)return;
+        new Chart(el,{type:'bar',data:{labels:porMes.map(function(x){return x.mes;}),datasets:[{label:'Tickets',data:porMes.map(function(x){return x.n;}),backgroundColor:'#0dcaf0'}]},
+            options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}}); })();
+
+    var porClaim = {{ por_claim_json|safe }};
+    hbar('chClaim', porClaim.map(function(x){return x.claim;}), porClaim.map(function(x){return x.n;}), '#a855f7');
+
+    var rc = {{ recl_charts_json|safe }};
+    if (rc) {
+        doughnut('chEstado', rc.estado.map(function(x){return x[0];}), rc.estado.map(function(x){return x[1];}));
+        hbar('chFuente', rc.fuente.map(function(x){return x[0];}), rc.fuente.map(function(x){return x[1];}), '#10b981');
+        hbar('chExp', rc.exp.map(function(x){return x[0];}), rc.exp.map(function(x){return x[1];}), '#f59e0b');
+        hbar('chPais', rc.pais.map(function(x){return x[0];}), rc.pais.map(function(x){return x[1];}), '#ef4444');
+    }
+})();
+</script>
+{% endblock %}

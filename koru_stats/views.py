@@ -3045,3 +3045,94 @@ def ticket_detail(request, ticket_id):
         "transcripcion_texto": transcripcion_texto,
     }
     return render(request, "koru_stats/ticket_detail.html", context)
+
+
+@login_required
+def tickets_stats(request):
+    from collections import Counter
+    from django.db.models import Count
+    from .models import Ticket
+
+    allowed = _tickets_allowed(request.user)
+    if not allowed:
+        return render(request, "koru_stats/tickets_stats.html", {"sin_acceso": True})
+
+    base = Ticket.objects.filter(tipo__in=allowed)
+
+    por_tipo = list(base.values("tipo").annotate(n=Count("id")).order_by("-n"))
+
+    mes_counter = Counter()
+    for f in base.exclude(fecha__isnull=True).values_list("fecha", flat=True):
+        mes_counter[f.strftime("%Y-%m")] += 1
+    meses = sorted(mes_counter.keys())[-12:]
+    por_mes = [{"mes": m, "n": mes_counter[m]} for m in meses]
+
+    claim_counter = Counter()
+    for cn in base.exclude(claim_name="").values_list("claim_name", flat=True):
+        claim_counter[cn] += 1
+    por_claim = [{"claim": k, "n": v} for k, v in claim_counter.most_common(15)]
+
+    recl = None
+    if "reclutamiento" in allowed:
+        rq = Ticket.objects.filter(tipo="reclutamiento")
+        total = 0
+        estado_c = Counter(); fuente = Counter(); pais = Counter(); exp = Counter()
+        auth_ok = disc_ok = aprob = rech = 0
+
+        def _g(e, *keys):
+            for k in keys:
+                v = (e.get(k) or "")
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v:
+                        return v
+            return ""
+
+        for t in rq.values("estado", "extra"):
+            e = t["extra"] or {}
+            total += 1
+            est = (t["estado"] or "").strip()
+            if est:
+                estado_c[est] += 1
+            le = est.lower()
+            if "pasa a corp" in le or "aceptad" in le or "miembro" in le:
+                aprob += 1
+            if "rechaz" in le:
+                rech += 1
+            f = _g(e, "1- ¿Dónde nos conociste?")
+            if f:
+                fuente[f[:40]] += 1
+            p = _g(e, "2- ¿De qué país eres?")
+            if p:
+                pais[p[:30]] += 1
+            x = _g(e, "3- ¿Cuánto llevas en EVE?", "3- ¿Cuánto tiempo de juego tienes?")
+            if x:
+                exp[x[:30]] += 1
+            if e.get("Auth registrado") in (True, "true", "True", 1):
+                auth_ok += 1
+            if e.get("Discord vinculado") in (True, "true", "True", 1):
+                disc_ok += 1
+
+        recl = {
+            "total": total, "aprob": aprob, "rech": rech,
+            "tasa_acept": round(aprob / total * 100, 1) if total else 0,
+            "auth_ok": auth_ok, "disc_ok": disc_ok,
+        }
+        recl_charts = {
+            "estado": estado_c.most_common(10),
+            "fuente": fuente.most_common(10),
+            "pais": pais.most_common(12),
+            "exp": exp.most_common(10),
+        }
+    else:
+        recl_charts = None
+
+    context = {
+        "allowed": sorted(allowed),
+        "por_tipo_json": _to_json(por_tipo),
+        "por_mes_json": _to_json(por_mes),
+        "por_claim_json": _to_json(por_claim),
+        "recl": recl,
+        "recl_charts_json": _to_json(recl_charts) if recl_charts else "null",
+    }
+    return render(request, "koru_stats/tickets_stats.html", context)

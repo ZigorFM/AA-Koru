@@ -13,6 +13,7 @@ urlpatterns = [
     path("auditor/", views.auditor_dashboard, name="auditor_dashboard"),
     path("auditor/piloto/<int:main_id>/", views.auditor_pilot, name="auditor_pilot"),
     path("tickets/", views.tickets_dashboard, name="tickets_dashboard"),
+    path("tickets/stats/", views.tickets_stats, name="tickets_stats"),
     path("tickets/<int:ticket_id>/", views.ticket_detail, name="ticket_detail"),
     path("export/resumen/", views.export_csv_summary, name="export_csv_summary"),
     path("export/pvp/",     views.export_csv_pvp,     name="export_csv_pvp"),

@@ -2964,6 +2964,7 @@ def ticket_detail(request, ticket_id):
         return HttpResponseForbidden("No tienes permiso para ver este tipo de ticket.")
 
     extra = t.extra or {}
+    TRANSCRIPT_KEYS = ("Transcripción", "Transcripción Auditoría")
     SKIP = {
         "id", "order", "Main", "Claim", "Discord", "Personaje", "Usuario Discord",
         "Nº", "Número", "Nº Ticket Discord", "Fecha", "Estado", "Tipo", "Asunto",
@@ -2971,14 +2972,14 @@ def ticket_detail(request, ticket_id):
         "Transcripción", "Transcripción texto", "Transcripción Auditoría",
     }
     campos = []
-    archivos = []
+    adjuntos = []
     for k, v in extra.items():
         if k in SKIP or v in (None, "", [], {}):
             continue
         if isinstance(v, list) and v and isinstance(v[0], dict) and "url" in v[0]:
             for f in v:
                 if f.get("url"):
-                    archivos.append({"name": f.get("name") or k, "url": f["url"]})
+                    adjuntos.append({"name": f.get("name") or k, "url": f["url"]})
             continue
         if isinstance(v, list):
             v = ", ".join(str(x.get("value", x)) if isinstance(x, dict) else str(x) for x in v)
@@ -2986,19 +2987,20 @@ def ticket_detail(request, ticket_id):
             v = v.get("value", str(v))
         campos.append({"k": k, "v": v})
 
-    # transcripción (archivo) de los campos de transcripción
-    for tk in ("Transcripción", "Transcripción Auditoría"):
+    transcripcion_files = []
+    for tk in TRANSCRIPT_KEYS:
         val = extra.get(tk)
         if isinstance(val, list):
             for f in val:
                 if isinstance(f, dict) and f.get("url"):
-                    archivos.append({"name": f.get("name") or tk, "url": f["url"]})
+                    transcripcion_files.append({"name": f.get("name") or tk, "url": f["url"]})
 
     context = {
         "t": t,
         "campos": campos,
-        "archivos": archivos,
+        "adjuntos": adjuntos,
+        "transcripcion_files": transcripcion_files,
         "notas": extra.get("Notas", ""),
-        "transcripcion_texto": extra.get("Transcripción texto") or extra.get("Transcripción Auditoría") or "",
+        "transcripcion_texto": extra.get("Transcripción texto") or "",
     }
     return render(request, "koru_stats/ticket_detail.html", context)

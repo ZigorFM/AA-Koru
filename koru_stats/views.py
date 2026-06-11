@@ -2997,12 +2997,48 @@ def ticket_detail(request, ticket_id):
                 if isinstance(f, dict) and f.get("url"):
                     transcripcion_files.append({"name": f.get("name") or tk, "url": f["url"]})
 
+    notas = extra.get("Notas", "") or ""
+    transcripcion_texto = extra.get("Transcripción texto") or ""
+
+    # Sustituir usuarios/IDs de Discord por el nombre del main (si lo conocemos)
+    dmap = {}
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT LOWER(du.username), du.uid, mc.character_name "
+                "FROM discord_discorduser du "
+                "JOIN authentication_userprofile up ON up.user_id = du.user_id "
+                "JOIN eveonline_evecharacter mc ON mc.id = up.main_character_id")
+            for uname, uid, cname in cur.fetchall():
+                if uname:
+                    dmap[uname] = cname
+                if uid:
+                    dmap[str(uid)] = cname
+    except Exception:
+        dmap = {}
+
+    import re as _re
+
+    def _sub_discord(text):
+        if not text or not dmap:
+            return text
+        return _re.sub(r"[A-Za-z0-9_.\\-]{3,}",
+                       lambda m: dmap.get(m.group(0).lower(), m.group(0)), text)
+
+    notas = _sub_discord(notas)
+    transcripcion_texto = _sub_discord(transcripcion_texto)
+    if t.asunto:
+        t.asunto = _sub_discord(t.asunto)
+    for cd in campos:
+        if isinstance(cd.get("v"), str):
+            cd["v"] = _sub_discord(cd["v"])
+
     context = {
         "t": t,
         "campos": campos,
         "adjuntos": adjuntos,
         "transcripcion_files": transcripcion_files,
-        "notas": extra.get("Notas", ""),
-        "transcripcion_texto": extra.get("Transcripción texto") or "",
+        "notas": notas,
+        "transcripcion_texto": transcripcion_texto,
     }
     return render(request, "koru_stats/ticket_detail.html", context)

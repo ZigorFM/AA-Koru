@@ -2970,6 +2970,8 @@ def ticket_detail(request, ticket_id):
         "Nº", "Número", "Nº Ticket Discord", "Fecha", "Estado", "Tipo", "Asunto",
         "Notas", "Alerta/Peligro", "Visible para piloto", "Última modificación",
         "Transcripción", "Transcripción texto", "Transcripción Auditoría",
+        "Discord Channel ID", "Discord Guild ID", "ID Discord",
+        "Interaction ID", "Message ID", "Canal Discord", "Canal Auditoría",
     }
     campos = []
     adjuntos = []

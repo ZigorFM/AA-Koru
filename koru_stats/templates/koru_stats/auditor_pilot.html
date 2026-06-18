@@ -226,8 +226,8 @@
             {% for c in cobertura %}
               <tr>
                 <td><img src="https://images.evetech.net/characters/{{ c.character_id }}/portrait?size=28" class="portrait me-1" onerror="this.style.display='none'">{{ c.character_name }}</td>
-                <td class="small {% if c.dias_login > 14 %}text-warning{% endif %}">{{ c.last_known_login|date:"Y-m-d"|default:"—" }}</td>
-                <td class="small {% if c.dias_wallet > 7 or c.dias_wallet == None %}text-danger{% endif %}">{{ c.last_update_wallet|date:"Y-m-d"|default:"sin token" }}</td>
+                <td class="small {% if c.dias_login and c.dias_login > 14 %}text-warning{% endif %}">{{ c.last_known_login|date:"Y-m-d"|default:"—" }}</td>
+                <td class="small {% if c.dias_wallet == None or c.dias_wallet > 7 %}text-danger{% endif %}">{{ c.last_update_wallet|date:"Y-m-d"|default:"sin token" }}</td>
                 <td class="text-end">{{ c.balance|rkisk }}</td>
               </tr>
             {% endfor %}

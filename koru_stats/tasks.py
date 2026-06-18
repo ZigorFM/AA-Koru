@@ -1765,6 +1765,7 @@ def run_auditor_pipeline(full=False):
     _safe(snapshot_corp_health, full=full)
     _safe(build_cohort_retention)
     _safe(build_recruitment_links)
+    _safe(build_social_graph)
     logger.info("koru run_auditor_pipeline DONE — scores=%s alerts=%s", n_scores, n_alerts)
     return {"scores": n_scores, "alerts": n_alerts}
 
@@ -2196,3 +2197,40 @@ def build_recruitment_links():
     RecruitmentLink.objects.bulk_create(list(seen.values()), batch_size=500)
     logger.info("koru build_recruitment_links: %s enlaces", len(seen))
     return len(seen)
+
+
+@shared_task
+def build_social_graph(ventana_dias=90, peso_min=2):
+    """Construye SocialEdge: pares de mains que coinciden como atacantes en el mismo killmail (D3)."""
+    from datetime import date, timedelta
+    from .models import SocialEdge, CharacterKillRecord
+    ventana = f"{ventana_dias}d"
+    cutoff = date.today() - timedelta(days=ventana_dias)
+
+    # Mapa main_id -> nombre (desde los killrecords)
+    names = {}
+    for mid, nm in (CharacterKillRecord.objects.filter(is_loss=False, kill_date__gte=cutoff)
+                    .values_list("main_character_id", "main_character_name").distinct()):
+        if mid and mid not in names:
+            names[mid] = nm or ""
+
+    with connection.cursor() as c:
+        c.execute(
+            "SELECT a.main_character_id AS a, b.main_character_id AS b, "
+            "       COUNT(*) AS peso, MAX(a.kill_date) AS ult "
+            "FROM koru_stats_characterkillrecord a "
+            "JOIN koru_stats_characterkillrecord b "
+            "  ON a.killmail_id = b.killmail_id AND a.main_character_id < b.main_character_id "
+            "WHERE a.is_loss = 0 AND b.is_loss = 0 AND a.kill_date >= %s "
+            "GROUP BY a.main_character_id, b.main_character_id "
+            "HAVING COUNT(*) >= %s",
+            [cutoff, peso_min])
+        rows = c.fetchall()
+
+    SocialEdge.objects.filter(ventana=ventana).delete()
+    objs = [SocialEdge(
+        main_a_id=a, main_b_id=b, main_a_name=names.get(a, ""), main_b_name=names.get(b, ""),
+        ventana=ventana, peso=int(peso), ultima_vez=ult) for a, b, peso, ult in rows]
+    SocialEdge.objects.bulk_create(objs, batch_size=1000)
+    logger.info("koru build_social_graph: %s aristas (ventana=%s)", len(objs), ventana)
+    return len(objs)

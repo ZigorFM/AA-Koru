@@ -3264,3 +3264,128 @@ def corp_recruitment_dashboard(request):
         "tiene_datos": bool(links),
     }
     return render(request, "koru_stats/corp_recruitment_dashboard.html", context)
+
+
+@permission_required("koru_stats.auditor_corp_health")
+def corp_social_dashboard(request):
+    """D3: grafo social — comunidades, hubs, lobos solitarios y salidas en bloque."""
+    from datetime import date, timedelta
+    from collections import defaultdict
+    from .models import (SocialEdge, CharacterKillRecord,
+                         CharacterOwnershipSnapshot, CharacterLifecycleEvent)
+
+    ventana = request.GET.get("ventana", "90d")
+    try:
+        ventana_dias = int("".join(ch for ch in ventana if ch.isdigit()) or 90)
+    except ValueError:
+        ventana_dias = 90
+    cutoff = date.today() - timedelta(days=ventana_dias)
+
+    edges = list(SocialEdge.objects.filter(ventana=ventana).order_by("-peso"))
+    name = {}
+    grado = defaultdict(int)
+    adj = defaultdict(set)
+    for e in edges:
+        name[e.main_a_id] = e.main_a_name
+        name[e.main_b_id] = e.main_b_name
+        grado[e.main_a_id] += 1
+        grado[e.main_b_id] += 1
+        adj[e.main_a_id].add(e.main_b_id)
+        adj[e.main_b_id].add(e.main_a_id)
+    nodos = set(adj.keys())
+
+    # Union-Find -> comunidades
+    parent = {n: n for n in nodos}
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    for e in edges:
+        union(e.main_a_id, e.main_b_id)
+    comp = defaultdict(list)
+    for n in nodos:
+        comp[find(n)].append(n)
+    comunidades = []
+    for miembros in comp.values():
+        if len(miembros) >= 3:
+            comunidades.append({
+                "size": len(miembros),
+                "miembros": sorted((name.get(m, str(m)) for m in miembros)),
+            })
+    comunidades.sort(key=lambda c: c["size"], reverse=True)
+
+    # Presentes ahora
+    present = set()
+    last_snap = (CharacterOwnershipSnapshot.objects.order_by("-snapshot_date")
+                 .values_list("snapshot_date", flat=True).first())
+    if last_snap:
+        present = set(CharacterOwnershipSnapshot.objects.filter(
+            snapshot_date=last_snap, corporation_id__in=_get_corp_ids())
+            .values_list("main_character_id", flat=True))
+
+    # Activos en PvP en la ventana (atacantes)
+    pvp_actives = {}
+    for mid, nm in (CharacterKillRecord.objects.filter(is_loss=False, kill_date__gte=cutoff)
+                    .values_list("main_character_id", "main_character_name").distinct()):
+        if mid:
+            pvp_actives[mid] = nm or str(mid)
+    # Lobos: activos en PvP, presentes, sin aristas
+    lobos = sorted(nm for mid, nm in pvp_actives.items()
+                   if mid in present and mid not in nodos)
+
+    # Hubs por grado
+    hubs = sorted(({"name": name.get(m, str(m)), "grado": g} for m, g in grado.items()),
+                  key=lambda h: h["grado"], reverse=True)[:15]
+
+    # Top conexiones
+    top_edges = [{"a": e.main_a_name, "b": e.main_b_name, "peso": e.peso} for e in edges[:25]]
+
+    # Salidas en bloque: leavers recientes (30d) socialmente conectados
+    desde_salidas = date.today() - timedelta(days=30)
+    leavers = {}
+    for mid, f in (CharacterLifecycleEvent.objects.filter(
+            evento__in=["salio_corp", "borrado_auth"], fecha__date__gte=desde_salidas)
+            .values_list("main_character_id", "fecha")):
+        if mid:
+            leavers[mid] = f
+    salidas_bloque = []
+    if leavers:
+        lset = set(leavers.keys())
+        lp = {n: n for n in lset}
+        def lfind(x):
+            while lp[x] != x:
+                lp[x] = lp[lp[x]]; x = lp[x]
+            return x
+        for e in edges:
+            if e.main_a_id in lset and e.main_b_id in lset:
+                ra, rb = lfind(e.main_a_id), lfind(e.main_b_id)
+                if ra != rb:
+                    lp[ra] = rb
+        lcomp = defaultdict(list)
+        for n in lset:
+            lcomp[lfind(n)].append(n)
+        for miembros in lcomp.values():
+            if len(miembros) >= 2:
+                salidas_bloque.append({
+                    "miembros": sorted(name.get(m, str(m)) for m in miembros),
+                    "size": len(miembros),
+                })
+        salidas_bloque.sort(key=lambda c: c["size"], reverse=True)
+
+    context = {
+        "ventana": ventana,
+        "tiene_datos": bool(edges),
+        "n_aristas": len(edges),
+        "n_nodos": len(nodos),
+        "comunidades": comunidades[:15],
+        "hubs": hubs,
+        "top_edges": top_edges,
+        "lobos": lobos,
+        "salidas_bloque": salidas_bloque,
+    }
+    return render(request, "koru_stats/corp_social_dashboard.html", context)

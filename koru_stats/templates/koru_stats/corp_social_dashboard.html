@@ -1,0 +1,103 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Dirección · Social{% endblock %}
+
+{% block page_title %}
+    {% translate "Grafo social" as page_header %}
+    {% translate "Quién vuela con quién — comunidades, hubs, lobos solitarios y salidas en bloque" as optional_subtitle %}
+    {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:auditor_dashboard" as url_aud %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_aud title="Auditor" fa_icon="fa-solid fa-user-shield" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <ul class="nav nav-pills mb-3">
+    <li class="nav-item"><a class="nav-link" href="{% url 'koru_stats:corp_health_dashboard' %}">Salud</a></li>
+    <li class="nav-item"><a class="nav-link" href="{% url 'koru_stats:corp_recruitment_dashboard' %}">Reclutamiento</a></li>
+    <li class="nav-item"><a class="nav-link active" href="{% url 'koru_stats:corp_social_dashboard' %}">Social</a></li>
+  </ul>
+
+  {% if not tiene_datos %}
+    <div class="alert alert-info">
+      Aún no hay grafo social. Ejecuta <code>build_social_graph()</code> (o el pipeline del auditor).
+      Se construye desde killmails compartidos de los últimos {{ ventana }}.
+    </div>
+  {% else %}
+
+  <p class="text-muted small">
+    Ventana {{ ventana }} · {{ n_nodos }} pilotos conectados · {{ n_aristas }} conexiones.
+    <span class="text-warning">Solo refleja PvP/zkill</span> — un minero/industrial legítimo puede aparecer "sin red".
+  </p>
+
+  {% if salidas_bloque %}
+  <div class="alert alert-danger py-2">
+    <strong>⚠️ Salidas en bloque (últimos 30 días):</strong>
+    grupos de miembros conectados que se fueron juntos —
+    {% for c in salidas_bloque %}<span class="badge bg-danger me-1">{{ c.miembros|join:", " }}</span>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="card-title">Comunidades (subgrupos)</h6>
+        {% for c in comunidades %}
+          <div class="mb-2">
+            <span class="badge bg-primary">{{ c.size }}</span>
+            <span class="small">{{ c.miembros|join:", " }}</span>
+          </div>
+        {% empty %}
+          <p class="text-muted small mb-0">Sin subgrupos de 3+ todavía.</p>
+        {% endfor %}
+      </div></div>
+    </div>
+
+    <div class="col-lg-3">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="card-title">Hubs (más conexiones)</h6>
+        <p class="text-muted small">Su salida fragmentaría el grupo.</p>
+        <ol class="ps-3 mb-0">
+        {% for h in hubs %}<li class="small">{{ h.name }} <span class="text-muted">({{ h.grado }})</span></li>{% endfor %}
+        </ol>
+      </div></div>
+    </div>
+
+    <div class="col-lg-3">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="card-title">Lobos solitarios <span class="text-muted small">(PvP)</span></h6>
+        <p class="text-muted small">Activos en PvP, presentes, sin red. Riesgo de fuga o infiltrado.</p>
+        {% if lobos %}
+          <div class="d-flex flex-wrap gap-1">
+            {% for n in lobos %}<span class="badge bg-secondary">{{ n }}</span>{% endfor %}
+          </div>
+        {% else %}
+          <p class="text-muted small mb-0">Ninguno.</p>
+        {% endif %}
+      </div></div>
+    </div>
+
+    <div class="col-12">
+      <div class="card"><div class="card-body">
+        <h6 class="card-title">Conexiones más fuertes</h6>
+        <div class="table-responsive" style="max-height:320px;overflow:auto">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Piloto A</th><th>Piloto B</th><th class="text-end">Killmails juntos</th></tr></thead>
+            <tbody>
+            {% for e in top_edges %}
+              <tr><td>{{ e.a }}</td><td>{{ e.b }}</td><td class="text-end">{{ e.peso }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

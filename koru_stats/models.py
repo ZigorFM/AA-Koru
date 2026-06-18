@@ -676,3 +676,26 @@ class RecruitmentLink(models.Model):
 
     def __str__(self):
         return f"{self.reclutador_name} -> {self.recluta_name}"
+
+
+class SocialEdge(models.Model):
+    """Arista de co-actividad entre dos mains (volaron en el mismo killmail) — D3."""
+    main_a_id   = models.IntegerField(db_index=True)   # canónico: a < b
+    main_b_id   = models.IntegerField(db_index=True)
+    main_a_name = models.CharField(max_length=100, default="", blank=True)
+    main_b_name = models.CharField(max_length=100, default="", blank=True)
+    ventana     = models.CharField(max_length=20, default="90d", db_index=True)
+    peso        = models.IntegerField(default=0)
+    ultima_vez  = models.DateField(null=True, blank=True)
+
+    class Meta:
+        verbose_name        = "Arista social"
+        verbose_name_plural = "Aristas sociales"
+        ordering = ["-peso"]
+        constraints = [
+            models.UniqueConstraint(fields=["main_a_id", "main_b_id", "ventana"], name="uniq_social_edge"),
+        ]
+        indexes = [models.Index(fields=["ventana", "peso"], name="koru_edge_ventana_peso")]
+
+    def __str__(self):
+        return f"{self.main_a_name} <-> {self.main_b_name} ({self.peso})"

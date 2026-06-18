@@ -16,6 +16,7 @@ class General(models.Model):
             ("fc_access",           "Puede ver panel FC/Director"),
             ("auditor_access",      "Puede ver el panel Auditor (seguridad)"),
             ("auditor_admin",       "Puede configurar el Auditor y revisar/descartar alertas"),
+            ("auditor_corp_health",  "Puede ver el panel de Salud de Corp (Directores/CEO)"),
             ("tickets_reclutamiento",   "Tickets: ve Reclutamiento"),
             ("tickets_directores",      "Tickets: ve A Directores"),
             ("tickets_asuntos_internos","Tickets: ve Asuntos Internos"),
@@ -606,3 +607,55 @@ class Ticket(models.Model):
 
     def __str__(self):
         return f"[{self.tipo}] {self.numero} | {self.main_character_name} | {self.estado}"
+
+
+# ---------------------------------------------------------------------------
+# Auditor — Directores/CEO (D1): salud de corp longitudinal
+# ---------------------------------------------------------------------------
+
+class CorpHealthSnapshot(models.Model):
+    """Foto mensual agregada de la salud de la corp (una fila por periodo)."""
+    period                = models.CharField(max_length=7, unique=True, db_index=True)  # YYYY-MM
+    n_miembros            = models.IntegerField(default=0)   # mains activos en el periodo
+    altas                 = models.IntegerField(default=0)
+    bajas                 = models.IntegerField(default=0)
+    neto                  = models.IntegerField(default=0)
+    churn_pct             = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    antiguedad_media_dias = models.IntegerField(default=0)
+    n_verde               = models.IntegerField(default=0)
+    n_amarillo            = models.IntegerField(default=0)
+    n_naranja             = models.IntegerField(default=0)
+    n_rojo                = models.IntegerField(default=0)
+    cobertura_pct         = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    participacion_media   = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    incidentes            = models.IntegerField(default=0)   # awox/espias confirmados (fase Casos)
+    indice_salud          = models.IntegerField(default=0)   # 0-100 compuesto
+    detalle               = models.JSONField(default=dict, blank=True)
+    computed_at           = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Salud de corp (snapshot)"
+        verbose_name_plural = "Salud de corp (snapshots)"
+        ordering = ["period"]
+
+    def __str__(self):
+        return f"{self.period} | {self.n_miembros} miembros | salud {self.indice_salud}"
+
+
+class CohortRetention(models.Model):
+    """Retencion por cohorte de entrada: de los que entraron en 'cohorte', cuantos siguen a +N meses."""
+    cohorte      = models.CharField(max_length=7, db_index=True)  # mes de entrada YYYY-MM
+    offset_meses = models.IntegerField()                          # 0,1,3,6,12
+    base         = models.IntegerField(default=0)
+    retenidos    = models.IntegerField(default=0)
+
+    class Meta:
+        verbose_name        = "Retencion por cohorte"
+        verbose_name_plural = "Retencion por cohorte"
+        ordering = ["cohorte", "offset_meses"]
+        constraints = [
+            models.UniqueConstraint(fields=["cohorte", "offset_meses"], name="uniq_cohort_offset"),
+        ]
+
+    def __str__(self):
+        return f"{self.cohorte} +{self.offset_meses}m: {self.retenidos}/{self.base}"

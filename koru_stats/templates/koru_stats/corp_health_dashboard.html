@@ -1,0 +1,145 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Dirección{% endblock %}
+
+{% block page_title %}
+    {% translate "Salud de la Corporación" as page_header %}
+    {% translate "Evolución y patrones — solo Directores/CEO (señales, no veredictos)" as optional_subtitle %}
+    {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:auditor_dashboard" as url_aud %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_aud title="Auditor" fa_icon="fa-solid fa-user-shield" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  {% if not tiene_datos %}
+    <div class="alert alert-info">
+      Aún no hay snapshots de salud. Ejecuta <code>snapshot_corp_health(full=True)</code> y
+      <code>build_cohort_retention()</code> (o el pipeline del auditor) para poblar el panel.
+    </div>
+  {% else %}
+
+  <!-- KPIs -->
+  <div class="row row-cols-2 row-cols-md-3 row-cols-lg-6 g-2 mb-3">
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2">
+      <div class="kpi-val">{{ kpis.n_miembros }}</div>
+      <div class="kpi-lbl">Miembros activos
+        {% if kpis.d_miembros != None %}{% if kpis.d_miembros > 0 %}<span class="text-success">▲{{ kpis.d_miembros }}</span>{% elif kpis.d_miembros < 0 %}<span class="text-danger">▼{{ kpis.d_miembros }}</span>{% endif %}{% endif %}
+      </div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2">
+      <div class="kpi-val text-primary">{{ kpis.indice }}</div>
+      <div class="kpi-lbl">Índice salud
+        {% if kpis.d_indice != None %}{% if kpis.d_indice > 0 %}<span class="text-success">▲{{ kpis.d_indice }}</span>{% elif kpis.d_indice < 0 %}<span class="text-danger">▼{{ kpis.d_indice }}</span>{% endif %}{% endif %}
+      </div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2">
+      <div class="kpi-val text-success">{{ kpis.altas }}</div><div class="kpi-lbl">Altas (mes)</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2">
+      <div class="kpi-val text-danger">{{ kpis.bajas }}</div><div class="kpi-lbl">Bajas (mes)</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2">
+      <div class="kpi-val {% if kpis.neto < 0 %}text-danger{% else %}text-success{% endif %}">{{ kpis.neto }}</div><div class="kpi-lbl">Neto</div></div></div></div>
+    <div class="col"><div class="card kpi-card text-center"><div class="card-body py-2">
+      <div class="kpi-val">{{ kpis.cobertura }}%</div><div class="kpi-lbl">Cobertura token</div></div></div></div>
+  </div>
+
+  {% if not kpis.lifecycle %}
+    <div class="alert alert-warning py-2 small">
+      Las altas/bajas y la retención por cohorte se acumulan desde que el auditor empezó a tomar
+      snapshots de ownership. El riesgo y la actividad sí reflejan el histórico completo.
+    </div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card"><div class="card-body">
+        <h6 class="card-title">Tamaño e índice de salud</h6>
+        <canvas id="chTam" height="150"></canvas>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card"><div class="card-body">
+        <h6 class="card-title">Distribución de riesgo por mes</h6>
+        <canvas id="chRisk" height="150"></canvas>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card"><div class="card-body">
+        <h6 class="card-title">Altas vs bajas</h6>
+        <canvas id="chFlujo" height="150"></canvas>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card"><div class="card-body">
+        <h6 class="card-title">Retención por cohorte (% que sigue)</h6>
+        {% if cohort_rows %}
+        <div class="table-responsive" style="max-height:300px;overflow:auto">
+          <table class="table table-sm mb-0 text-center">
+            <thead><tr><th class="text-start">Cohorte</th><th>Base</th>{% for o in cohort_offsets %}<th>+{{ o }}m</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for row in cohort_rows %}
+              <tr>
+                <td class="text-start">{{ row.cohorte }}</td>
+                <td class="text-muted">{{ row.base }}</td>
+                {% for cell in row.cells %}
+                  <td>{% if cell.pct == None %}<span class="text-muted">—</span>{% else %}<span class="badge {% if cell.pct >= 70 %}bg-success{% elif cell.pct >= 40 %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ cell.pct }}%</span>{% endif %}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <p class="text-muted small mb-0">Sin cohortes aún (se construyen desde las entradas detectadas).</p>
+        {% endif %}
+      </div></div>
+    </div>
+  </div>
+
+  {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+    var D = {{ serie_json|safe }};
+    if (!D || !D.periods || !D.periods.length) return;
+
+    new Chart(document.getElementById('chTam'), {
+        type:'line',
+        data:{ labels:D.periods, datasets:[
+            { label:'Miembros activos', data:D.n_miembros, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.12)', fill:true, tension:.2, yAxisID:'y' },
+            { label:'Índice salud', data:D.indice, borderColor:'#10b981', tension:.2, yAxisID:'y1' }
+        ]},
+        options:{ scales:{ y:{ position:'left' }, y1:{ position:'right', min:0, max:100, grid:{ drawOnChartArea:false } } },
+                  plugins:{ legend:{ position:'bottom' } } }
+    });
+
+    new Chart(document.getElementById('chRisk'), {
+        type:'bar',
+        data:{ labels:D.periods, datasets:[
+            { label:'Verde', data:D.verde, backgroundColor:'#10b981' },
+            { label:'Amarillo', data:D.amarillo, backgroundColor:'#f59e0b' },
+            { label:'Naranja', data:D.naranja, backgroundColor:'#f97316' },
+            { label:'Rojo', data:D.rojo, backgroundColor:'#ef4444' }
+        ]},
+        options:{ responsive:true, scales:{ x:{ stacked:true }, y:{ stacked:true } },
+                  plugins:{ legend:{ position:'bottom' } } }
+    });
+
+    new Chart(document.getElementById('chFlujo'), {
+        type:'bar',
+        data:{ labels:D.periods, datasets:[
+            { label:'Altas', data:D.altas, backgroundColor:'#10b981' },
+            { label:'Bajas', data:D.bajas.map(function(x){return -x;}), backgroundColor:'#ef4444' }
+        ]},
+        options:{ plugins:{ legend:{ position:'bottom' },
+                  tooltip:{ callbacks:{ label:function(c){ return c.dataset.label+': '+Math.abs(c.raw); } } } },
+                  scales:{ y:{ ticks:{ callback:function(v){ return Math.abs(v); } } } } }
+    });
+})();
+</script>
+{% endblock %}

@@ -1762,6 +1762,8 @@ def run_auditor_pipeline(full=False):
     _safe(detect_lifecycle_events)
     n_scores = compute_auditor_scores(full=full)
     n_alerts = _safe(emit_auditor_alerts) or 0
+    _safe(snapshot_corp_health, full=full)
+    _safe(build_cohort_retention)
     logger.info("koru run_auditor_pipeline DONE — scores=%s alerts=%s", n_scores, n_alerts)
     return {"scores": n_scores, "alerts": n_alerts}
 
@@ -2028,3 +2030,146 @@ def sync_tickets():
         total += 1
     logger.info("koru sync_tickets: %s tickets sincronizados", total)
     return total
+
+
+# ===========================================================================
+# AUDITOR D1 — Salud de corp longitudinal (Directores/CEO)
+# ===========================================================================
+
+@shared_task
+def snapshot_corp_health(full=False):
+    """Agrega una fila CorpHealthSnapshot por periodo (salud de corp para Directores)."""
+    from datetime import date, datetime as _dt
+    from django.db.models import Count as _Count, Avg as _Avg
+    from .models import (CorpHealthSnapshot, AuditorRiskScore,
+                         CharacterMonthlyPvp, CharacterMonthlySummary,
+                         CharacterLifecycleEvent)
+    corp_ids = _get_active_corp_ids()
+    if not corp_ids:
+        logger.warning("koru snapshot_corp_health: sin corps activas")
+        return 0
+    cur_period = _dt.now().strftime("%Y-%m")
+    if full:
+        periods = _all_periods_with_data() or [cur_period]
+    else:
+        periods = sorted(set(_default_periods(2) + [cur_period]))
+    saved = 0
+    for period in periods:
+        try:
+            y, m = int(period[:4]), int(period[5:7])
+        except (ValueError, IndexError):
+            continue
+        inicio = date(y, m, 1)
+        fin = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+        is_current = (period == cur_period)
+
+        # Miembros activos del periodo (union pvp + summary, filtrado por corp)
+        mains = set(CharacterMonthlyPvp.objects.filter(
+            period=period, corporation_id__in=corp_ids).values_list("main_character_id", flat=True))
+        mains |= set(CharacterMonthlySummary.objects.filter(
+            period=period, corporation_id__in=corp_ids).values_list("main_character_id", flat=True))
+        n_miembros = len(mains)
+
+        # Distribucion de riesgo (AuditorRiskScore del periodo)
+        dist = {"verde": 0, "amarillo": 0, "naranja": 0, "rojo": 0}
+        for nivel, n in (AuditorRiskScore.objects.filter(period=period, corporation_id__in=corp_ids)
+                         .values("nivel").annotate(n=_Count("id")).values_list("nivel", "n")):
+            if nivel in dist:
+                dist[nivel] = n
+
+        # Altas / bajas del periodo (ciclo de vida; solo desde el despliegue de snapshots)
+        ev = CharacterLifecycleEvent.objects.filter(fecha__date__gte=inicio, fecha__date__lt=fin)
+        altas = ev.filter(evento="entro_corp").values("main_character_id").distinct().count()
+        bajas = (ev.filter(evento__in=["salio_corp", "borrado_auth"])
+                 .values("main_character_id").distinct().count())
+        lifecycle_disp = ev.exists()
+        neto = altas - bajas
+        churn = round(100.0 * bajas / n_miembros, 2) if n_miembros else 0.0
+
+        # Participacion media (flotas)
+        part = (CharacterMonthlyPvp.objects.filter(period=period, corporation_id__in=corp_ids)
+                .aggregate(a=_Avg("participations"))["a"]) or 0
+        participacion_media = round(float(part), 2)
+
+        # Cobertura de tokens (solo periodo actual = estado vigente)
+        cobertura = 0.0
+        if is_current:
+            ph = ",".join(["%s"] * len(corp_ids))
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT SUM(CASE WHEN cau.id IS NOT NULL AND cau.active=1 THEN 1 ELSE 0 END), COUNT(*) "
+                    "FROM eveonline_evecharacter ec "
+                    "JOIN authentication_characterownership co ON co.character_id = ec.id "
+                    "LEFT JOIN corptools_characteraudit cau ON cau.character_id = ec.id "
+                    f"WHERE ec.corporation_id IN ({ph})", corp_ids)
+                row = c.fetchone()
+            if row and row[1]:
+                cobertura = round(100.0 * (row[0] or 0) / row[1], 2)
+
+        # Indice de salud (simple, refinable en fases posteriores)
+        en_riesgo = dist["naranja"] + dist["rojo"]
+        riesgo_score = 100.0 * (1 - en_riesgo / n_miembros) if n_miembros else 100.0
+        indice = round(0.6 * riesgo_score + 0.4 * cobertura) if is_current else round(riesgo_score)
+
+        det = {"dist": dist, "lifecycle_disponible": lifecycle_disp,
+               "riesgo_score": round(riesgo_score, 1), "en_riesgo": en_riesgo}
+
+        CorpHealthSnapshot.objects.update_or_create(
+            period=period,
+            defaults=dict(
+                n_miembros=n_miembros, altas=altas, bajas=bajas, neto=neto, churn_pct=churn,
+                antiguedad_media_dias=0,
+                n_verde=dist["verde"], n_amarillo=dist["amarillo"],
+                n_naranja=dist["naranja"], n_rojo=dist["rojo"],
+                cobertura_pct=cobertura, participacion_media=participacion_media,
+                incidentes=0, indice_salud=indice, detalle=det,
+            ),
+        )
+        saved += 1
+    logger.info("koru snapshot_corp_health: %s periodos (full=%s)", saved, full)
+    return saved
+
+
+@shared_task
+def build_cohort_retention():
+    """Retencion por cohorte de entrada, derivada de los eventos de ciclo de vida."""
+    from datetime import date
+    from .models import CharacterLifecycleEvent, CohortRetention
+    OFFSETS = [0, 1, 3, 6, 12]
+    today = date.today()
+
+    def add_months(d, n):
+        mth = d.month - 1 + n
+        yy = d.year + mth // 12
+        return date(yy, mth % 12 + 1, 1)
+
+    entradas = {}
+    for mid, f in (CharacterLifecycleEvent.objects.filter(evento="entro_corp")
+                   .values_list("main_character_id", "fecha").order_by("fecha")):
+        if mid and mid not in entradas:
+            entradas[mid] = f.date()
+    salidas = {}
+    for mid, f in (CharacterLifecycleEvent.objects.filter(evento__in=["salio_corp", "borrado_auth"])
+                   .values_list("main_character_id", "fecha").order_by("fecha")):
+        if mid and mid not in salidas:
+            salidas[mid] = f.date()
+
+    cohortes = {}
+    for mid, fent in entradas.items():
+        cohortes.setdefault(f"{fent.year}-{fent.month:02d}", []).append(mid)
+
+    n = 0
+    CohortRetention.objects.all().delete()
+    for c, mids in cohortes.items():
+        y, m = int(c[:4]), int(c[5:7])
+        cstart = date(y, m, 1)
+        base = len(mids)
+        for off in OFFSETS:
+            if add_months(cstart, off) > today:
+                continue
+            target = add_months(cstart, off)
+            ret = sum(1 for mid in mids if (salidas.get(mid) is None or salidas[mid] >= target))
+            CohortRetention.objects.create(cohorte=c, offset_meses=off, base=base, retenidos=ret)
+            n += 1
+    logger.info("koru build_cohort_retention: %s filas", n)
+    return n

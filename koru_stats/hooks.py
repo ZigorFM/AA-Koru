@@ -121,6 +121,24 @@ def register_menu_tickets():
     )
 
 
+class DirectoresMenuHook(MenuItemHook):
+    def render(self, request):
+        if request.user.has_perm("koru_stats.auditor_corp_health"):
+            return super().render(request)
+        return ""
+
+
+@hooks.register("menu_item_hook")
+def register_menu_corp_health():
+    return DirectoresMenuHook(
+        "\U0001f300 Koru \u2014 Direcci\u00f3n",
+        "fas fa-chart-line fa-fw",
+        "koru_stats:corp_health_dashboard",
+        navactive=["koru_stats:corp_health_dashboard"],
+        order=1206,
+    )
+
+
 @hooks.register("url_hook")
 def register_urls():
     return UrlHook(urls, "koru_stats", r"^koru/")

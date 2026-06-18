@@ -3135,3 +3135,70 @@ def tickets_stats(request):
         "recl_charts_json": _to_json(recl_charts) if recl_charts else "null",
     }
     return render(request, "koru_stats/tickets_stats.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Auditor — Directores/CEO (D1): Salud de corp
+# ---------------------------------------------------------------------------
+
+@permission_required("koru_stats.auditor_corp_health")
+def corp_health_dashboard(request):
+    from .models import CorpHealthSnapshot, CohortRetention
+
+    snaps = list(CorpHealthSnapshot.objects.order_by("period"))
+    serie = {
+        "periods":       [s.period for s in snaps],
+        "n_miembros":    [s.n_miembros for s in snaps],
+        "altas":         [s.altas for s in snaps],
+        "bajas":         [s.bajas for s in snaps],
+        "neto":          [s.neto for s in snaps],
+        "indice":        [s.indice_salud for s in snaps],
+        "churn":         [float(s.churn_pct) for s in snaps],
+        "cobertura":     [float(s.cobertura_pct) for s in snaps],
+        "participacion": [float(s.participacion_media) for s in snaps],
+        "verde":         [s.n_verde for s in snaps],
+        "amarillo":      [s.n_amarillo for s in snaps],
+        "naranja":       [s.n_naranja for s in snaps],
+        "rojo":          [s.n_rojo for s in snaps],
+    }
+    latest = snaps[-1] if snaps else None
+    prev   = snaps[-2] if len(snaps) >= 2 else None
+
+    def _delta(attr):
+        if not latest or not prev:
+            return None
+        return getattr(latest, attr) - getattr(prev, attr)
+
+    kpis = None
+    if latest:
+        kpis = {
+            "n_miembros": latest.n_miembros, "d_miembros": _delta("n_miembros"),
+            "altas": latest.altas, "bajas": latest.bajas, "neto": latest.neto,
+            "churn": float(latest.churn_pct), "cobertura": float(latest.cobertura_pct),
+            "indice": latest.indice_salud, "d_indice": _delta("indice_salud"),
+            "lifecycle": (latest.detalle or {}).get("lifecycle_disponible", False),
+        }
+
+    OFFSETS = [0, 1, 3, 6, 12]
+    coh = {}
+    for r in CohortRetention.objects.order_by("cohorte", "offset_meses"):
+        coh.setdefault(r.cohorte, {"base": r.base, "vals": {}})
+        coh[r.cohorte]["vals"][r.offset_meses] = r.retenidos
+    cohort_rows = []
+    for c in sorted(coh.keys()):
+        base = coh[c]["base"] or 1
+        cells = []
+        for off in OFFSETS:
+            v = coh[c]["vals"].get(off)
+            cells.append({"off": off, "n": v,
+                          "pct": round(100 * v / base) if v is not None else None})
+        cohort_rows.append({"cohorte": c, "base": coh[c]["base"], "cells": cells})
+
+    context = {
+        "serie_json": _to_json(serie),
+        "kpis": kpis,
+        "tiene_datos": bool(snaps),
+        "cohort_rows": cohort_rows,
+        "cohort_offsets": OFFSETS,
+    }
+    return render(request, "koru_stats/corp_health_dashboard.html", context)

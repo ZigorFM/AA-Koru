@@ -1764,6 +1764,7 @@ def run_auditor_pipeline(full=False):
     n_alerts = _safe(emit_auditor_alerts) or 0
     _safe(snapshot_corp_health, full=full)
     _safe(build_cohort_retention)
+    _safe(build_recruitment_links)
     logger.info("koru run_auditor_pipeline DONE — scores=%s alerts=%s", n_scores, n_alerts)
     return {"scores": n_scores, "alerts": n_alerts}
 
@@ -2173,3 +2174,25 @@ def build_cohort_retention():
             n += 1
     logger.info("koru build_cohort_retention: %s filas", n)
     return n
+
+
+@shared_task
+def build_recruitment_links():
+    """Construye RecruitmentLink desde el espejo de tickets de reclutamiento (D2).
+    Reclutador = claim_name del ticket; recluta = main del ticket. Se queda con el ticket mas antiguo por recluta."""
+    from .models import Ticket, RecruitmentLink
+    seen = {}
+    qs = (Ticket.objects.filter(tipo="reclutamiento")
+          .order_by("fecha", "baserow_row_id")
+          .values_list("main_character_id", "main_character_name", "claim_name", "fecha", "numero"))
+    for mid, mname, claim, fecha, numero in qs:
+        if not mid or mid in seen:
+            continue
+        seen[mid] = RecruitmentLink(
+            recluta_main_id=mid, recluta_name=mname or "",
+            reclutador_name=(claim or "").strip() or "(sin asignar)",
+            fecha=fecha, ticket_numero=numero or "")
+    RecruitmentLink.objects.all().delete()
+    RecruitmentLink.objects.bulk_create(list(seen.values()), batch_size=500)
+    logger.info("koru build_recruitment_links: %s enlaces", len(seen))
+    return len(seen)

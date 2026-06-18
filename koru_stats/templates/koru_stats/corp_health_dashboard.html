@@ -16,6 +16,10 @@
 
 {% block content %}
 <div class="container-fluid">
+  <ul class="nav nav-pills mb-3">
+    <li class="nav-item"><a class="nav-link active" href="{% url 'koru_stats:corp_health_dashboard' %}">Salud</a></li>
+    <li class="nav-item"><a class="nav-link" href="{% url 'koru_stats:corp_recruitment_dashboard' %}">Reclutamiento</a></li>
+  </ul>
 
   {% if not tiene_datos %}
     <div class="alert alert-info">

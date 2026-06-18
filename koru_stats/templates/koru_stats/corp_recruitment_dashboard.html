@@ -1,0 +1,81 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n koru_stats_tags %}
+
+{% block title %}Koru — Dirección · Reclutamiento{% endblock %}
+
+{% block page_title %}
+    {% translate "Linaje de reclutamiento" as page_header %}
+    {% translate "Quién trae a quién — retención y riesgo por reclutador" as optional_subtitle %}
+    {% include "framework/header/page-header.html" with title=page_header subtitle=optional_subtitle %}
+{% endblock %}
+
+{% block header_nav_collapse_right %}
+    {% url "koru_stats:auditor_dashboard" as url_aud %}
+    {% include "framework/header/nav-collapse-button.html" with btn_modifier="outline-light" url=url_aud title="Auditor" fa_icon="fa-solid fa-user-shield" icon_on_mobile=True icon_on_desktop=True %}
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <ul class="nav nav-pills mb-3">
+    <li class="nav-item"><a class="nav-link" href="{% url 'koru_stats:corp_health_dashboard' %}">Salud</a></li>
+    <li class="nav-item"><a class="nav-link active" href="{% url 'koru_stats:corp_recruitment_dashboard' %}">Reclutamiento</a></li>
+  </ul>
+
+  {% if not tiene_datos %}
+    <div class="alert alert-info">
+      Aún no hay enlaces de reclutamiento. Ejecuta <code>build_recruitment_links()</code>
+      (o el pipeline del auditor) tras sincronizar los tickets.
+    </div>
+  {% else %}
+
+  <p class="text-muted small">{{ total_reclutas }} reclutas enlazados · {{ reclutadores|length }} reclutadores.
+     Retención = recluta aún presente en la corp. Riesgo medio = score del último periodo del auditor.</p>
+
+  <div class="card"><div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr>
+          <th>Reclutador</th><th class="text-end">Reclutas</th>
+          <th class="text-end">Retención</th><th class="text-end">Riesgo medio</th>
+          <th class="text-end">En riesgo</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for r in reclutadores %}
+          <tr>
+            <td>{{ r.nombre }}</td>
+            <td class="text-end">{{ r.reclutas }}</td>
+            <td class="text-end">
+              <span class="badge {% if r.ret_pct >= 70 %}bg-success{% elif r.ret_pct >= 40 %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ r.ret_pct }}%</span>
+              <span class="text-muted small">({{ r.retenidos }}/{{ r.reclutas }})</span>
+            </td>
+            <td class="text-end">
+              {% if r.riesgo_med == None %}<span class="text-muted">—</span>
+              {% else %}<span class="badge {% if r.riesgo_med < 30 %}bg-success{% elif r.riesgo_med < 60 %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ r.riesgo_med }}</span>{% endif %}
+            </td>
+            <td class="text-end">{% if r.en_riesgo %}<span class="text-danger">{{ r.en_riesgo }}</span>{% else %}0{% endif %}</td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-secondary py-0" data-bs-toggle="collapse" data-bs-target="#rec{{ forloop.counter }}">ver</button>
+            </td>
+          </tr>
+          <tr class="collapse" id="rec{{ forloop.counter }}">
+            <td colspan="6" class="bg-body-tertiary">
+              <div class="d-flex flex-wrap gap-2 py-2">
+                {% for m in r.lista %}
+                  <span class="badge rounded-pill {% if m.nivel == 'rojo' %}bg-danger{% elif m.nivel == 'naranja' %}bg-warning text-dark{% elif m.nivel == 'amarillo' %}bg-warning text-dark{% elif m.nivel == 'verde' %}bg-success{% else %}bg-secondary{% endif %}"
+                        title="{% if m.fecha %}{{ m.fecha|date:'Y-m-d' }}{% endif %}{% if m.risk != None %} · riesgo {{ m.risk }}{% endif %}">
+                    {% if not m.retenido %}<s>{{ m.name }}</s>{% else %}{{ m.name }}{% endif %}
+                  </span>
+                {% endfor %}
+              </div>
+              <div class="small text-muted pb-2">Tachados = ya no están en la corp.</div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+
+  {% endif %}
+</div>
+{% endblock %}

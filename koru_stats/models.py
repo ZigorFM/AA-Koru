@@ -659,3 +659,20 @@ class CohortRetention(models.Model):
 
     def __str__(self):
         return f"{self.cohorte} +{self.offset_meses}m: {self.retenidos}/{self.base}"
+
+
+class RecruitmentLink(models.Model):
+    """Reclutador -> recluta, derivado del espejo de tickets de reclutamiento (D2)."""
+    recluta_main_id = models.IntegerField(unique=True, db_index=True)
+    recluta_name    = models.CharField(max_length=100, default="", blank=True)
+    reclutador_name = models.CharField(max_length=100, default="", blank=True, db_index=True)
+    fecha           = models.DateField(null=True, blank=True)
+    ticket_numero   = models.CharField(max_length=50, blank=True, default="")
+
+    class Meta:
+        verbose_name        = "Enlace de reclutamiento"
+        verbose_name_plural = "Enlaces de reclutamiento"
+        ordering = ["-fecha"]
+
+    def __str__(self):
+        return f"{self.reclutador_name} -> {self.recluta_name}"

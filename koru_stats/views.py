@@ -3202,3 +3202,65 @@ def corp_health_dashboard(request):
         "cohort_offsets": OFFSETS,
     }
     return render(request, "koru_stats/corp_health_dashboard.html", context)
+
+
+@permission_required("koru_stats.auditor_corp_health")
+def corp_recruitment_dashboard(request):
+    """D2: linaje de reclutamiento — reclutador -> reclutas, con retención y riesgo."""
+    from collections import defaultdict
+    from datetime import date as _date
+    from .models import RecruitmentLink, AuditorRiskScore, CharacterOwnershipSnapshot
+
+    links = list(RecruitmentLink.objects.all())
+    corp_ids = _get_corp_ids()
+
+    present = set()
+    last_snap = (CharacterOwnershipSnapshot.objects.order_by("-snapshot_date")
+                 .values_list("snapshot_date", flat=True).first())
+    if last_snap:
+        present = set(CharacterOwnershipSnapshot.objects.filter(
+            snapshot_date=last_snap, corporation_id__in=corp_ids)
+            .values_list("main_character_id", flat=True))
+
+    last_period = (AuditorRiskScore.objects.order_by("-period")
+                   .values_list("period", flat=True).first())
+    risk_by_main = {}
+    if last_period:
+        for mid, rt, nv in AuditorRiskScore.objects.filter(period=last_period).values_list(
+                "main_character_id", "risk_total", "nivel"):
+            risk_by_main[mid] = (rt, nv)
+
+    agg = defaultdict(lambda: {"reclutas": 0, "retenidos": 0, "riesgo_sum": 0,
+                               "riesgo_n": 0, "en_riesgo": 0, "lista": []})
+    for l in links:
+        a = agg[l.reclutador_name]
+        a["reclutas"] += 1
+        ret = l.recluta_main_id in present
+        if ret:
+            a["retenidos"] += 1
+        rt, nv = risk_by_main.get(l.recluta_main_id, (None, None))
+        if rt is not None:
+            a["riesgo_sum"] += rt
+            a["riesgo_n"] += 1
+            if nv in ("naranja", "rojo"):
+                a["en_riesgo"] += 1
+        a["lista"].append({"name": l.recluta_name, "fecha": l.fecha,
+                           "retenido": ret, "nivel": nv, "risk": rt})
+
+    reclutadores = []
+    for nombre, a in agg.items():
+        ret_pct = round(100 * a["retenidos"] / a["reclutas"]) if a["reclutas"] else 0
+        riesgo_med = round(a["riesgo_sum"] / a["riesgo_n"]) if a["riesgo_n"] else None
+        reclutadores.append({
+            "nombre": nombre, "reclutas": a["reclutas"], "retenidos": a["retenidos"],
+            "ret_pct": ret_pct, "riesgo_med": riesgo_med, "en_riesgo": a["en_riesgo"],
+            "lista": sorted(a["lista"], key=lambda x: x["fecha"] or _date.min, reverse=True),
+        })
+    reclutadores.sort(key=lambda r: r["reclutas"], reverse=True)
+
+    context = {
+        "reclutadores": reclutadores,
+        "total_reclutas": len(links),
+        "tiene_datos": bool(links),
+    }
+    return render(request, "koru_stats/corp_recruitment_dashboard.html", context)

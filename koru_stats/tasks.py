@@ -2104,7 +2104,7 @@ def snapshot_corp_health(full=False):
                     f"WHERE ec.corporation_id IN ({ph})", corp_ids)
                 row = c.fetchone()
             if row and row[1]:
-                cobertura = round(100.0 * (row[0] or 0) / row[1], 2)
+                cobertura = round(100.0 * float(row[0] or 0) / float(row[1]), 2)
 
         # Indice de salud (simple, refinable en fases posteriores)
         en_riesgo = dist["naranja"] + dist["rojo"]

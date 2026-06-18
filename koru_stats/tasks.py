@@ -1491,8 +1491,7 @@ def compute_auditor_scores(periods=None, full=False):
         c.execute(
             "SELECT main_ec.character_id, MAX(main_ec.character_name), MAX(main_ec.corporation_id), "
             "       MAX(cau.last_known_login), COUNT(DISTINCT ec.id) AS n_chars, "
-            "       SUM(CASE WHEN cau.id IS NULL OR cau.last_update_wallet IS NULL "
-            "                 OR cau.last_update_wallet < (NOW() - INTERVAL %s DAY) "
+            "       SUM(CASE WHEN cau.id IS NULL OR cau.active = 0 "
             "                THEN 1 ELSE 0 END) AS n_blind, "
             "       DATEDIFF(NOW(), MAX(cau.last_known_login)) AS dias_login "
             "FROM eveonline_evecharacter ec "
@@ -1501,7 +1500,7 @@ def compute_auditor_scores(periods=None, full=False):
             "JOIN eveonline_evecharacter main_ec ON main_ec.id = up.main_character_id "
             "LEFT JOIN corptools_characteraudit cau ON cau.character_id = ec.id "
             f"WHERE ec.corporation_id IN ({ph}) "
-            "GROUP BY main_ec.character_id", [stale_days] + corp_ids)
+            "GROUP BY main_ec.character_id", corp_ids)
         base = {}
         for r in c.fetchall():
             base[r[0]] = {

@@ -2783,8 +2783,7 @@ def auditor_pilot(request, main_id):
     with connection.cursor() as cur:
         cur.execute(
             "SELECT ec.character_id, ec.character_name, ec.corporation_id, "
-            "       cau.last_known_login, cau.last_update_wallet, cau.balance, "
-            "       DATEDIFF(NOW(), cau.last_update_wallet) AS dias_wallet, "
+            "       cau.last_known_login, cau.balance, cau.active, "
             "       DATEDIFF(NOW(), cau.last_known_login)   AS dias_login "
             + SQL_ALTS +
             "LEFT JOIN corptools_characteraudit cau ON cau.character_id = ec.id "
